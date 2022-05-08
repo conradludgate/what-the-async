@@ -1,0 +1,16 @@
+[package]
+name = "wta-hyper"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wta-reactor = { version = "=0.1.0", path = "../reactor" }
+what-the-async = { version = "=0.1.0", path = ".." }
+futures = "0.3"
+hyper = { version = "0.14", features = ["server"] }
+tokio = { version = "1.0", default-features = false }
+
+[dev-dependencies]
+hyper = { version = "0.14", features = ["server", "http1", "http2"] }

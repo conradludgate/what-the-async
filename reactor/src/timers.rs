@@ -7,7 +7,6 @@ use std::{
 
 use educe::Educe;
 use futures::{Future};
-use pin_project::pin_project;
 
 use crate::context;
 
@@ -52,19 +51,19 @@ impl<'a> Iterator for QueueIter<'a> {
 
 /// Future for sleeping fixed amounts of time.
 /// Does not block the thread
-#[pin_project]
 pub struct Sleep {
     instant: Instant,
 }
+
+impl Unpin for Sleep {}
 
 impl Future for Sleep {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let instant = *self.project().instant;
         // if the future is not yet ready
-        if instant > Instant::now() {
-            context(|r| r.timers.insert(instant, cx.waker().clone()));
+        if self.instant > Instant::now() {
+            context(|r| r.timers.insert(self.instant, cx.waker().clone()));
             Poll::Pending
         } else {
             Poll::Ready(())

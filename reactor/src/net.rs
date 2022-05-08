@@ -5,9 +5,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{channel::mpsc::UnboundedReceiver, Stream, StreamExt, AsyncRead, AsyncWrite};
+use futures::{channel::mpsc::UnboundedReceiver, ready, AsyncRead, AsyncWrite, Future, StreamExt};
 use mio::Interest;
-use pin_project::pin_project;
 
 use crate::io::{Event, Registration};
 
@@ -25,29 +24,44 @@ impl TcpListener {
     }
 
     /// Accept a new TcpStream to communicate with
-    pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
-        loop {
-            self.registration.events().next().await;
-            match self.registration.accept() {
-                Ok((stream, socket)) => break Ok((TcpStream::from_mio(stream)?, socket)),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(e) => break Err(e),
-            }
+    pub fn accept(&self) -> Accept<'_> {
+        let events = self.registration.events();
+        let source = &*self.registration;
+        Accept { events, source }
+    }
+}
+
+pub struct Accept<'a> {
+    events: UnboundedReceiver<Event>,
+    source: &'a mio::net::TcpListener,
+}
+
+impl Unpin for Accept<'_> {}
+
+impl Future for Accept<'_> {
+    type Output = io::Result<(TcpStream, SocketAddr)>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        ready!(self.events.poll_next_unpin(cx));
+        match self.source.accept() {
+            Ok((stream, socket)) => Poll::Ready(Ok((TcpStream::from_mio(stream)?, socket))),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
 
 /// Handles communication over a TCP connection
-#[pin_project]
 pub struct TcpStream {
     registration: Registration<mio::net::TcpStream>,
 
     readable: Option<()>,
     writable: Option<()>,
 
-    #[pin]
     events: UnboundedReceiver<Event>,
 }
+
+impl Unpin for TcpStream {}
 
 impl TcpStream {
     pub(crate) fn from_mio(stream: mio::net::TcpStream) -> std::io::Result<Self> {
@@ -63,8 +77,7 @@ impl TcpStream {
     }
 
     fn poll_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut this = self.as_mut().project();
-        let event = match this.events.as_mut().poll_next(cx) {
+        let event = match self.events.poll_next_unpin(cx) {
             Poll::Ready(Some(event)) => event,
             Poll::Ready(None) => {
                 return Poll::Ready(Err(io::Error::new(
@@ -76,10 +89,10 @@ impl TcpStream {
         };
 
         if event.is_readable() {
-            *this.readable = Some(());
+            self.readable = Some(());
         }
         if event.is_writable() {
-            *this.writable = Some(());
+            self.writable = Some(());
         }
         Poll::Ready(Ok(()))
     }

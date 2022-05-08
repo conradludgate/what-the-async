@@ -1,5 +1,4 @@
-//! This is an full runtime example. Spawns 10 tasks that sleep
-//! for a random duration and then return that duration.
+//! This is an full runtime example. Uses async-IO through epoll/kqueue
 use std::{error::Error, net::SocketAddr};
 
 use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt};

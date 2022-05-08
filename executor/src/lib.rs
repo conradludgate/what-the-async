@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    cell::RefCell,
     collections::VecDeque,
     future::Future,
     pin::Pin,
     sync::{Arc, Condvar, Mutex},
-    task::{Context, Poll, Wake, Waker}, cell::RefCell,
+    task::{Context, Poll, Wake, Waker},
 };
 
 use futures::{channel::oneshot, FutureExt};
-use pin_project::pin_project;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>;
 
@@ -110,8 +110,9 @@ impl Wake for TaskWaker {
     }
 }
 
-#[pin_project]
-pub struct JoinHandle<R>(#[pin] oneshot::Receiver<R>);
+pub struct JoinHandle<R>(oneshot::Receiver<R>);
+
+impl<R> Unpin for JoinHandle<R> {}
 
 impl<R> JoinHandle<R> {
     pub fn new() -> (oneshot::Sender<R>, Self) {
@@ -123,9 +124,8 @@ impl<R> JoinHandle<R> {
 impl<R> Future for JoinHandle<R> {
     type Output = R;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // poll the inner channel for the spawned future's result
-        this.0.as_mut().poll(cx).map(|x| x.unwrap())
+        self.0.poll_unpin(cx).map(|x| x.unwrap())
     }
 }

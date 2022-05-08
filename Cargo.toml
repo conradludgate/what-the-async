@@ -2,6 +2,7 @@
 members = [
     "reactor",
     "executor",
+    "hyper"
 ]
 
 [package]
@@ -18,3 +19,5 @@ futures = "0.3"
 
 [dev-dependencies]
 rand = "0.8"
+hyper = { version = "0.14", features = ["server", "http1", "http2"] }
+tokio = { version = "1.0", features = ["full"] }
