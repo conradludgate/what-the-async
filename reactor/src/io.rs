@@ -1,4 +1,3 @@
-// use chashmap::CHashMap;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use mio::{event::Source, Token};
 use sharded_slab::Slab;
@@ -56,11 +55,6 @@ impl Default for Os {
 }
 
 impl Os {
-    // fn new_token(&self) -> Token {
-    //     let token = self.token.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    //     Token(token)
-    // }
-
     /// Polls the OS for new events, and dispatches those to any awaiting tasks
     pub(crate) fn process(&self) {
         self.poll
@@ -72,18 +66,15 @@ impl Os {
             )
             .unwrap();
 
-        let mut remove = vec![];
-
         for event in &*self.events.read().unwrap() {
-            if let Some(sender) = self.tasks.get(event.token().0) {
+            let key = event.token().0;
+            if let Some(sender) = self.tasks.get(key) {
                 if sender.unbounded_send(event.into()).is_err() {
-                    remove.push(event.token());
+                    // error means the receiver was dropped
+                    // which means the registration should have been de-registered
+                    self.tasks.remove(key);
                 }
             }
-        }
-
-        for token in remove {
-            self.tasks.remove(token.0);
         }
     }
 }
