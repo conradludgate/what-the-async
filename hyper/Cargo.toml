@@ -13,4 +13,6 @@ hyper = { version = "0.14", features = ["server"] }
 tokio = { version = "1.0", default-features = false }
 
 [dev-dependencies]
-hyper = { version = "0.14", features = ["server", "http1", "http2"] }
+hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
+tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"

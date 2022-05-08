@@ -1,7 +1,7 @@
 //! This is an full runtime example. Uses async-IO through epoll/kqueue
 use std::{error::Error, net::SocketAddr};
 
-use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt};
+use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
 use wta_reactor::net::{TcpListener, TcpStream};
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
@@ -14,8 +14,10 @@ async fn start() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let server = TcpListener::bind(addr.parse().unwrap())?;
     println!("Listening on: {}", addr);
 
+    let mut accept = server.accept();
+
     loop {
-        let (stream, addr) = server.accept().await?;
+        let (stream, addr) = accept.next().await.unwrap()?;
         what_the_async::spawn(async move {
             if let Err(e) = process(stream, addr).await {
                 println!("failed to process connection; error = {}", e);

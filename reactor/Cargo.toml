@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 futures = "0.3"
 mio = { version = "0.8", features = ["os-poll", "net"] }
-chashmap = "2.2.2"
+# chashmap = "2.2.2"
+sharded-slab = "0.1.4"
 
 [dependencies.educe]
 version = "*"

@@ -4,24 +4,28 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{ready, AsyncRead, AsyncWrite, Future, FutureExt};
+use futures::{ready, AsyncRead, AsyncWrite, Future, StreamExt};
 use wta_reactor::net::{Accept, TcpListener, TcpStream};
 
-pub struct Incoming<'a> {
-    listener: &'a TcpListener,
-    accept: Option<Accept<'a>>,
+pub struct Incoming {
+    accept: Accept,
 }
 
-impl<'a> Incoming<'a> {
-    pub fn new(listener: &'a TcpListener) -> Self {
+impl Incoming {
+    pub fn bind(addr: SocketAddr) -> std::io::Result<Self> {
+        Ok(Self::new(TcpListener::bind(addr)?))
+    }
+
+    pub fn new(listener: TcpListener) -> Self {
         Self {
-            listener,
-            accept: None,
+            accept: listener.accept(),
         }
     }
 }
 
-impl hyper::server::accept::Accept for Incoming<'_> {
+impl Unpin for Incoming {}
+
+impl hyper::server::accept::Accept for Incoming {
     type Conn = AddrStream;
 
     type Error = std::io::Error;
@@ -30,16 +34,13 @@ impl hyper::server::accept::Accept for Incoming<'_> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
-        let mut accept = self.accept.take().unwrap_or_else(|| self.listener.accept());
-        match accept.poll_unpin(cx) {
-            Poll::Ready(Ok((stream, socket))) => {
+        match self.accept.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok((stream, socket)))) => {
                 Poll::Ready(Some(Ok(AddrStream { stream, socket })))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
-            Poll::Pending => {
-                self.accept.replace(accept);
-                Poll::Pending
-            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
