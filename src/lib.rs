@@ -11,29 +11,26 @@ use std::{
 
 use futures::pin_mut;
 use wta_executor::{Executor, JoinHandle};
+use wta_reactor::Reactor;
 
+#[derive(Clone)]
 pub struct Runtime {
     executor: Arc<Executor>,
+    reactor: Arc<Reactor>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
         let executor: Arc<Executor> = Arc::default();
+        let reactor: Arc<Reactor> = Arc::default();
+        let this = Self { executor, reactor };
+
         let n = std::thread::available_parallelism().map_or(4, |t| t.get());
         for i in 0..n {
-            let executor = executor.clone();
-            std::thread::Builder::new()
-                .name(format!("wta-{}", i))
-                .spawn(move || {
-                    executor.register();
-                    loop {
-                        executor.clone().poll_once()
-                    }
-                })
-                .unwrap();
+            this.spawn_worker(format!("wta-{}", i));
         }
 
-        Self { executor }
+        this
     }
 }
 
@@ -61,11 +58,29 @@ where
 }
 
 impl Runtime {
+    fn register(&self) {
+        self.executor.register();
+        self.reactor.register();
+    }
+
+    pub fn spawn_worker(&self, name: String) {
+        let this = self.clone();
+        std::thread::Builder::new()
+            .name(name)
+            .spawn(move || {
+                this.register();
+                loop {
+                    this.executor.clone().poll_once()
+                }
+            })
+            .unwrap();
+    }
+
     pub fn block_on<F>(&self, fut: F) -> F::Output
     where
         F: Future,
     {
-        self.executor.register();
+        self.register();
 
         let ready = Arc::new(AtomicBool::new(true));
         let waker = Waker::from(Arc::new(MainWaker {
@@ -82,6 +97,8 @@ impl Runtime {
                     std::task::Poll::Ready(r) => break r,
                     std::task::Poll::Pending => ready.store(false, Ordering::SeqCst),
                 }
+            } else {
+                self.reactor.book_keeping();
             }
         }
     }
