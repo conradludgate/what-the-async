@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "reactor",
+    "executor",
+]
+
+[package]
+name = "what-the-async"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wta-reactor = { version = "=0.1.0", path = "reactor" }
+wta-executor = { version = "=0.1.0", path = "executor" }
+futures = "0.3"
+
+[dev-dependencies]
+rand = "0.8"
