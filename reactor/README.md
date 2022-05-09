@@ -14,3 +14,5 @@ For a more complex and faster timer setup, take a look at https://tokio.rs/blog/
 This reactor makes use of [mio](https://crates.io/crates/mio) which was written for use in tokio, but was built into a separate crate. It allows for registering data sources for events, and then polling for those events.
 
 We store use an async-channel per event source registration. Any events that are relevent are pushed to the channel. If an async-read/write future is called, it will retrieve those events from the channel and handle them accordingly.
+
+Currently, the only implemented form of IO is TCP listeners and streams

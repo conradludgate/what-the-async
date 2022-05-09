@@ -2,6 +2,9 @@
 name = "wta-executor"
 version = "0.1.0"
 edition = "2021"
+description = "Executor for the what-the-async runtime"
+license = "MIT"
+repository = "https://github.com/conradludgate/what-the-async"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
