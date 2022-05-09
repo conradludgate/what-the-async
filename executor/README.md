@@ -11,4 +11,4 @@ Each worker will continuously run `executor.poll_once()` which will
 The task will be polled with a context that will reference that task (using a `Mutex<Option<Task>>`),
 and a copy of the executor.
 
-Calling wake on this context will then call `executor.wake(task)`. If there as threads sleeping, one will be woken up.
+Calling wake on this context will then call `executor.wake(task)`. If there are threads sleeping, one will be woken up.

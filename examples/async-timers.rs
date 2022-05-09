@@ -1,5 +1,3 @@
-//! This is an full runtime example. Spawns 10 tasks that sleep
-//! for a random duration and then return that duration.
 use std::time::{Duration, Instant};
 
 use futures::future::join_all;

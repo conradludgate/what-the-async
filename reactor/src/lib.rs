@@ -1,6 +1,10 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+
 use std::{cell::RefCell, sync::Arc};
 
-pub mod io;
+mod io;
 pub mod net;
 pub mod timers;
 
@@ -20,7 +24,7 @@ impl Reactor {
         }
 
         // get the OS events
-        self.os.process()
+        self.os.process();
     }
 
     /// register this executor on the current thread

@@ -1,9 +1,8 @@
-//! This is an full runtime example. Uses async-IO through epoll/kqueue
 use std::{error::Error, net::SocketAddr};
 
 use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
-use what_the_async::net::{TcpListener, TcpStream};
 use what_the_async as wta;
+use what_the_async::net::{TcpListener, TcpStream};
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let runtime = wta::Runtime::default();

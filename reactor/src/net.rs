@@ -17,21 +17,21 @@ pub struct TcpListener {
 }
 
 impl TcpListener {
-    /// Create a new TcpListener bound to the socket
+    /// Create a new `TcpListener` bound to the socket
     pub fn bind(addr: SocketAddr) -> std::io::Result<Self> {
         let registration =
             Registration::new(mio::net::TcpListener::bind(addr)?, Interest::READABLE)?;
         Ok(Self { registration })
     }
 
-    /// Accept a new TcpStream to communicate with
+    /// Accept [`TcpStream`]s to communicate with
     pub fn accept(self) -> Accept {
         let Self { registration } = self;
         Accept { registration }
     }
 }
 
-/// A [`Stream`] of tcp-streams that are connecting to this tcp server
+/// A [`Stream`] of [`TcpStream`] that are connecting to this tcp server
 pub struct Accept {
     registration: Registration<mio::net::TcpListener>,
 }

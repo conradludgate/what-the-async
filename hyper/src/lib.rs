@@ -1,3 +1,7 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+
 use std::{
     net::SocketAddr,
     pin::Pin,

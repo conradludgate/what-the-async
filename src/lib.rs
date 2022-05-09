@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::missing_panics_doc)]
 
 use std::{
     future::Future,
@@ -27,7 +29,7 @@ impl Default for Runtime {
         let reactor: Arc<Reactor> = Arc::default();
         let this = Self { executor, reactor };
 
-        let n = std::thread::available_parallelism().map_or(4, |t| t.get());
+        let n = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
         for i in 0..n {
             this.spawn_worker(format!("wta-worker-{}", i));
         }
@@ -36,6 +38,7 @@ impl Default for Runtime {
     }
 }
 
+/// Spawns a blocking function in a new thread, and returns an async handle to it's result.
 pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<F::Output>
 where
     F: FnOnce() -> R + Send + 'static,
@@ -64,7 +67,7 @@ impl Runtime {
             .spawn(move || {
                 this.register();
                 loop {
-                    this.executor.clone().poll_once()
+                    this.executor.clone().poll_once();
                 }
             })
             .unwrap();
@@ -112,6 +115,6 @@ struct MainWaker {
 
 impl Wake for MainWaker {
     fn wake(self: Arc<Self>) {
-        self.ready.store(true, Ordering::Relaxed)
+        self.ready.store(true, Ordering::Relaxed);
     }
 }

@@ -29,10 +29,10 @@ impl Event {
 impl From<&mio::event::Event> for Event {
     fn from(e: &mio::event::Event) -> Self {
         let mut event = 0;
-        event |= e.is_readable() as u8;
-        event |= (e.is_writable() as u8) << 1;
-        event |= (e.is_read_closed() as u8) << 2;
-        event |= (e.is_write_closed() as u8) << 3;
+        event |= u8::from(e.is_readable());
+        event |= u8::from(e.is_writable()) << 1;
+        event |= u8::from(e.is_read_closed()) << 2;
+        event |= u8::from(e.is_write_closed()) << 3;
         Event(event)
     }
 }

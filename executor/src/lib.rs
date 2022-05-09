@@ -1,4 +1,7 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
 
 use std::{
     cell::RefCell,
@@ -52,7 +55,7 @@ impl Executor {
         self.tasks.push(task);
         // self.condvar.notify_one();
         if let Some(t) = self.threads.pop() {
-            t.unpark()
+            t.unpark();
         };
     }
 
@@ -63,11 +66,10 @@ impl Executor {
                 // try acquire a task from the queue
                 if let Some(task) = self.tasks.pop() {
                     break task;
-                } else {
-                    // park this thread
-                    self.threads.push(std::thread::current());
-                    std::thread::park();
                 }
+                // park this thread
+                self.threads.push(std::thread::current());
+                std::thread::park();
             }
         };
 
@@ -107,7 +109,7 @@ struct TaskWaker {
 
 impl Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
-        self.wake_by_ref()
+        self.wake_by_ref();
     }
     fn wake_by_ref(self: &Arc<Self>) {
         if let Some(task) = self.task.lock().unwrap().take() {
@@ -121,6 +123,7 @@ pub struct JoinHandle<R>(oneshot::Receiver<R>);
 impl<R> Unpin for JoinHandle<R> {}
 
 impl<R> JoinHandle<R> {
+    #[must_use]
     pub fn new() -> (oneshot::Sender<R>, Self) {
         let (sender, receiver) = oneshot::channel();
         (sender, Self(receiver))
@@ -132,6 +135,6 @@ impl<R> Future for JoinHandle<R> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // poll the inner channel for the spawned future's result
-        self.0.poll_unpin(cx).map(|x| x.unwrap())
+        self.0.poll_unpin(cx).map(Result::unwrap)
     }
 }

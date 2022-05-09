@@ -6,8 +6,8 @@ use hyper::{
     service::{make_service_fn, service_fn},
     Body, Request, Response,
 };
-use wta_hyper::{AddrStream, Executor, Incoming};
 use what_the_async::timers::Sleep;
+use wta_hyper::{AddrStream, Executor, Incoming};
 
 fn main() {
     let runtime = what_the_async::Runtime::default();

@@ -1,12 +1,13 @@
 use std::{
     cmp::Reverse,
     pin::Pin,
+    sync::{Mutex, MutexGuard},
     task::{Context, Poll, Waker},
-    time::{Duration, Instant}, sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 use educe::Educe;
-use futures::{Future};
+use futures::Future;
 
 use crate::context;
 
@@ -18,8 +19,7 @@ impl Queue {
         let entry = PriorityQueueEntry(task, Reverse(instant));
         let mut queue = self.0.lock().unwrap();
         let index = match queue.binary_search(&entry) {
-            Ok(index) => index,
-            Err(index) => index,
+            Ok(index) | Err(index) => index,
         };
         queue.insert(index, entry);
     }
@@ -73,10 +73,12 @@ impl Future for Sleep {
 
 impl Sleep {
     /// sleep until a specific point in time
+    #[must_use]
     pub fn until(instant: Instant) -> Sleep {
         Self { instant }
     }
     /// sleep for a specific duration of time
+    #[must_use]
     pub fn duration(duration: Duration) -> Sleep {
         Sleep::until(Instant::now() + duration)
     }
