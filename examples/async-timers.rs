@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 
 use futures::future::join_all;
 use rand::Rng;
-use wta_reactor::timers::Sleep;
+use what_the_async as wta;
 
 fn main() {
-    let runtime = what_the_async::Runtime::default();
+    let runtime = wta::Runtime::default();
     let time = Instant::now();
     println!("output {:?}", runtime.block_on(start()));
     println!("took {:?}", time.elapsed());
@@ -23,14 +23,14 @@ async fn start() -> Duration {
 }
 
 async fn spawn_task(i: usize) -> Duration {
-    what_the_async::spawn(async move {
+    wta::spawn(async move {
         let ms = rand::thread_rng().gen_range(0..1000);
         let dur = Duration::from_millis(ms);
         println!(
             "task {i}, thread {thread_id:?}, dur {dur:?}",
             thread_id = std::thread::current().id()
         );
-        Sleep::duration(dur).await;
+        wta::timers::Sleep::duration(dur).await;
         dur
     })
     .await

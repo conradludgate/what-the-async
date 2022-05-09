@@ -7,12 +7,13 @@ edition = "2021"
 
 [dependencies]
 wta-reactor = { version = "=0.1.0", path = "../reactor" }
-what-the-async = { version = "=0.1.0", path = ".." }
+wta-executor = { version = "=0.1.0", path = "../executor" }
 futures = "0.3"
 hyper = { version = "0.14", features = ["server"] }
 tokio = { version = "1.0", default-features = false }
 
 [dev-dependencies]
+what-the-async = { version = "=0.1.0", path = ".." }
 hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
 tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"

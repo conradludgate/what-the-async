@@ -1,8 +1,8 @@
-use std::{sync::Arc, cell::RefCell};
+use std::{cell::RefCell, sync::Arc};
 
 pub mod io;
-pub mod timers;
 pub mod net;
+pub mod timers;
 
 #[derive(Default)]
 pub struct Reactor {
@@ -34,11 +34,9 @@ thread_local! {
 }
 
 pub(crate) fn context<R>(f: impl FnOnce(&Arc<Reactor>) -> R) -> R {
-    REACTOR.with(|reactor| {
-        let reactor = reactor.borrow();
-        let reactor = reactor
-            .as_ref()
-            .expect("spawn called outside of an reactor context");
-        f(reactor)
+    REACTOR.with(|r| {
+        let r = r.borrow();
+        let r = r.as_ref().expect("called outside of an reactor context");
+        f(r)
     })
 }

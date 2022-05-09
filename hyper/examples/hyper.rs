@@ -7,7 +7,7 @@ use hyper::{
     Body, Request, Response,
 };
 use wta_hyper::{AddrStream, Executor, Incoming};
-use wta_reactor::timers::Sleep;
+use what_the_async::timers::Sleep;
 
 fn main() {
     let runtime = what_the_async::Runtime::default();

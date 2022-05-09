@@ -2,13 +2,14 @@
 
 use std::{
     cell::RefCell,
-    collections::VecDeque,
     future::Future,
     pin::Pin,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
     task::{Context, Poll, Wake, Waker},
+    thread::Thread,
 };
 
+use crossbeam_queue::SegQueue;
 use futures::{channel::oneshot, FutureExt};
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>;
@@ -18,12 +19,12 @@ thread_local! {
 }
 
 pub(crate) fn context<R>(f: impl FnOnce(&Arc<Executor>) -> R) -> R {
-    EXECUTOR.with(|exec| {
-        let exec = exec.borrow();
-        let exec = exec
+    EXECUTOR.with(|e| {
+        let e = e.borrow();
+        let e = e
             .as_ref()
             .expect("spawn called outside of an executor context");
-        f(exec)
+        f(e)
     })
 }
 
@@ -37,8 +38,8 @@ where
 
 #[derive(Default)]
 pub struct Executor {
-    tasks: Mutex<VecDeque<Task>>,
-    condvar: Condvar,
+    tasks: SegQueue<Task>,
+    threads: SegQueue<Thread>,
 }
 
 impl Executor {
@@ -48,35 +49,37 @@ impl Executor {
     }
 
     fn wake(&self, task: Task) {
-        self.tasks.lock().unwrap().push_back(task);
-        self.condvar.notify_one();
+        self.tasks.push(task);
+        // self.condvar.notify_one();
+        if let Some(t) = self.threads.pop() {
+            t.unpark()
+        };
     }
 
     pub fn poll_once(self: Arc<Self>) {
         // Take one task from the queue.
         let mut task = {
-            // wait for the tasks queue to be unlocked
-            let mut tasks = self.tasks.lock().unwrap();
             loop {
-                // try acquire a task from the front
-                if let Some(task) = tasks.pop_front() {
+                // try acquire a task from the queue
+                if let Some(task) = self.tasks.pop() {
                     break task;
                 } else {
-                    // if no tasks, pause this thread until someone wakes us back up
-                    tasks = self.condvar.wait(tasks).unwrap();
+                    // park this thread
+                    self.threads.push(std::thread::current());
+                    std::thread::park();
                 }
             }
         };
 
-        let task_ref = Arc::new(Mutex::new(None));
-        let waker = Waker::from(Arc::new(TaskWaker {
-            task: task_ref.clone(),
+        let wake = Arc::new(TaskWaker {
+            task: Mutex::new(None),
             executor: self,
-        }));
+        });
+        let waker = Waker::from(wake.clone());
         let mut cx = Context::from_waker(&waker);
 
         if task.as_mut().poll(&mut cx).is_pending() {
-            task_ref.lock().unwrap().replace(task);
+            wake.task.lock().unwrap().replace(task);
         }
     }
 
@@ -99,11 +102,14 @@ impl Executor {
 
 struct TaskWaker {
     executor: Arc<Executor>,
-    task: Arc<Mutex<Option<Task>>>,
+    task: Mutex<Option<Task>>,
 }
 
 impl Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
+        self.wake_by_ref()
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
         if let Some(task) = self.task.lock().unwrap().take() {
             self.executor.wake(task);
         }

@@ -54,7 +54,7 @@ where
     F::Output: Send,
 {
     fn execute(&self, fut: F) {
-        what_the_async::spawn(fut);
+        wta_executor::spawn(fut);
     }
 }
 

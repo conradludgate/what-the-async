@@ -10,8 +10,10 @@ use std::{
 };
 
 use futures::pin_mut;
-use wta_executor::{Executor, JoinHandle};
+use wta_executor::Executor;
+pub use wta_executor::{spawn, JoinHandle};
 use wta_reactor::Reactor;
+pub use wta_reactor::{net, timers};
 
 #[derive(Clone)]
 pub struct Runtime {
@@ -27,19 +29,11 @@ impl Default for Runtime {
 
         let n = std::thread::available_parallelism().map_or(4, |t| t.get());
         for i in 0..n {
-            this.spawn_worker(format!("wta-{}", i));
+            this.spawn_worker(format!("wta-worker-{}", i));
         }
 
         this
     }
-}
-
-pub fn spawn<F>(fut: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + Sync + 'static,
-    F::Output: Send,
-{
-    wta_executor::spawn(fut)
 }
 
 pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<F::Output>

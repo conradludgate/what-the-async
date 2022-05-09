@@ -2,10 +2,11 @@
 use std::{error::Error, net::SocketAddr};
 
 use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
-use wta_reactor::net::{TcpListener, TcpStream};
+use what_the_async::net::{TcpListener, TcpStream};
+use what_the_async as wta;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let runtime = what_the_async::Runtime::default();
+    let runtime = wta::Runtime::default();
     runtime.block_on(start())
 }
 
@@ -18,7 +19,7 @@ async fn start() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 
     loop {
         let (stream, addr) = accept.next().await.unwrap()?;
-        what_the_async::spawn(async move {
+        wta::spawn(async move {
             if let Err(e) = process(stream, addr).await {
                 println!("failed to process connection; error = {}", e);
             }

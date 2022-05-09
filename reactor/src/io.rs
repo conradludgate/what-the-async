@@ -57,22 +57,19 @@ impl Default for Os {
 impl Os {
     /// Polls the OS for new events, and dispatches those to any awaiting tasks
     pub(crate) fn process(&self) {
-        self.poll
-            .write()
-            .unwrap()
-            .poll(
-                &mut self.events.write().unwrap(),
-                Some(Duration::from_micros(100)),
-            )
-            .unwrap();
+        {
+            let mut events = self.events.write().unwrap();
+            let mut poll = self.poll.write().unwrap();
+            poll.poll(&mut events, Some(Duration::from_micros(100)))
+                .unwrap();
+        }
 
         for event in &*self.events.read().unwrap() {
-            let key = event.token().0;
-            if let Some(sender) = self.tasks.get(key) {
+            if let Some(sender) = self.tasks.get(event.token().0) {
                 if sender.unbounded_send(event.into()).is_err() {
                     // error means the receiver was dropped
                     // which means the registration should have been de-registered
-                    self.tasks.remove(key);
+                    self.tasks.remove(event.token().0);
                 }
             }
         }
@@ -81,7 +78,7 @@ impl Os {
 
 pub(crate) struct Registration<S: Source> {
     pub reactor: Arc<Reactor>,
-    pub receiver: UnboundedReceiver<Event>,
+    pub events: UnboundedReceiver<Event>,
     pub token: mio::Token,
     pub source: S,
 }
@@ -102,17 +99,18 @@ impl<S: Source> DerefMut for Registration<S> {
 
 impl<S: Source> Registration<S> {
     pub fn new(mut source: S, interests: mio::Interest) -> std::io::Result<Self> {
-        context(|reactor| {
-            let (sender, receiver) = unbounded();
-            let token = Token(reactor.os.tasks.insert(sender).unwrap());
+        let reactor = context(Arc::clone);
+        let (sender, events) = unbounded();
+        let token = Token(reactor.os.tasks.insert(sender).unwrap());
+        {
             let poll = reactor.os.poll.read().unwrap();
             poll.registry().register(&mut source, token, interests)?;
-            Ok(Self {
-                reactor: reactor.clone(),
-                receiver,
-                token,
-                source,
-            })
+        }
+        Ok(Self {
+            reactor,
+            events,
+            token,
+            source,
         })
     }
 }
