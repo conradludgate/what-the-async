@@ -12,8 +12,3 @@ repository = "https://github.com/conradludgate/what-the-async"
 futures = "0.3"
 mio = { version = "0.8", features = ["os-poll", "net"] }
 sharded-slab = "0.1.4"
-
-[dependencies.educe]
-version = "0.4"
-features = ["Default", "PartialEq", "Eq", "PartialOrd", "Ord"]
-default-features = false
