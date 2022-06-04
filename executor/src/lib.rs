@@ -1,15 +1,15 @@
-#![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
+#![feature(layout_for_ptr, set_ptr_value, ptr_const_cast)]
 
 use std::{
     cell::RefCell,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker},
-    thread::Thread,
+    task::{Context, Poll, Wake, Waker, RawSpawner, RawSpawnerVTable, Spawner},
+    thread::Thread, mem::ManuallyDrop, alloc::Layout,
 };
 
 use crossbeam_queue::SegQueue;
@@ -51,6 +51,10 @@ impl Executor {
         EXECUTOR.with(|exec| *exec.borrow_mut() = Some(self.clone()));
     }
 
+    pub fn spawner(self: Arc<Self>) -> Spawner {
+        unsafe { Spawner::from_raw(raw_spawner(self)) }
+    }
+
     fn wake(&self, task: Task) {
         self.tasks.push(task);
         // self.condvar.notify_one();
@@ -75,10 +79,11 @@ impl Executor {
 
         let wake = Arc::new(TaskWaker {
             task: Mutex::new(None),
-            executor: self,
+            executor: self.clone(),
         });
         let waker = Waker::from(wake.clone());
-        let mut cx = Context::from_waker(&waker);
+        let spawner = self.spawner();
+        let mut cx = Context::from_waker(&waker).with_spawner(&spawner);
 
         if task.as_mut().poll(&mut cx).is_pending() {
             wake.task.lock().unwrap().replace(task);
@@ -137,4 +142,49 @@ impl<R> Future for JoinHandle<R> {
         // poll the inner channel for the spawned future's result
         self.0.poll_unpin(cx).map(Result::unwrap)
     }
+}
+
+fn raw_spawner(spawner: Arc<Executor>) -> RawSpawner {
+    // Increment the reference count of the arc to clone it.
+    unsafe fn clone_spawner(spawner: *const ()) -> RawSpawner {
+        unsafe { Arc::increment_strong_count(spawner as *const Executor) };
+        new(spawner)
+    }
+
+    // Wake by value, moving the Arc into the Wake::wake function
+    unsafe fn spawn(spawner: *const (), future: *const (dyn Future<Output = ()> + Send + Sync + 'static)) {
+        let spawner = unsafe { Arc::from_raw(spawner as *const Executor) };
+        let future = Pin::new_unchecked(copy_to_box(future));
+        spawner.wake(future);
+    }
+
+    // Wake by reference, wrap the spawner in ManuallyDrop to avoid dropping it
+    unsafe fn spawn_by_ref(spawner: *const (), future: *const (dyn Future<Output = ()> + Send + Sync + 'static)) {
+        let spawner = unsafe { ManuallyDrop::new(Arc::from_raw(spawner as *const Executor)) };
+        let future = Pin::new_unchecked(copy_to_box(future));
+        spawner.wake(future);
+    }
+
+    // Decrement the reference count of the Arc on drop
+    unsafe fn drop_spawner(spawner: *const ()) {
+        unsafe { Arc::decrement_strong_count(spawner as *const Executor) };
+    }
+
+    fn new(spawner: *const ()) -> RawSpawner {
+        RawSpawner::new(
+            spawner,
+            &RawSpawnerVTable::new(clone_spawner, spawn, spawn_by_ref, drop_spawner),
+        )
+    }
+    new(Arc::into_raw(spawner) as *const ())
+}
+
+unsafe fn copy_to_box<T: ?Sized>(ptr: *const T) -> Box<T> {
+    let layout = Layout::for_value_raw(ptr);
+    let allocation = std::alloc::alloc(layout);
+    if allocation.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), allocation, layout.size());
+    unsafe { Box::from_raw(allocation.with_metadata_of(ptr.as_mut())) }
 }

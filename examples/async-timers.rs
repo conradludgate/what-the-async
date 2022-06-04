@@ -21,7 +21,7 @@ async fn start() -> Duration {
 }
 
 async fn spawn_task(i: usize) -> Duration {
-    wta::spawn(async move {
+    wta::spawn!(async move {
         let ms = rand::thread_rng().gen_range(0..1000);
         let dur = Duration::from_millis(ms);
         println!(

@@ -13,14 +13,56 @@ use std::{
 
 use futures::pin_mut;
 use wta_executor::Executor;
-pub use wta_executor::{spawn, JoinHandle};
+pub use wta_executor::{JoinHandle};
 use wta_reactor::Reactor;
 pub use wta_reactor::{net, timers};
+
+#[doc(hidden)]
+pub mod __private {
+    use std::{task::{Poll, Context}, pin::Pin};
+
+    use futures::Future;
+
+    pub use super::JoinHandle;
+
+    pub async fn spawn_inner<F>(fut: F)
+    where
+        F: Future<Output = ()> + Send + Sync + 'static,
+    {
+        struct Spawn<F>(Option<F>);
+        impl<F> Unpin for Spawn<F> {}
+        impl<F> Future for Spawn<F>
+        where
+            F: Future<Output = ()> + Send + Sync + 'static,
+        {
+            type Output = ();
+            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<()> {
+                let fut = self.0.take().unwrap();
+                ctx.spawner().spawn(fut);
+                Poll::Ready(())
+            }
+        }
+
+        // return the handle to the spawner so that it can be `await`ed with it's output value
+        Spawn(Some(fut)).await
+    }
+}
 
 #[derive(Clone)]
 pub struct Runtime {
     executor: Arc<Executor>,
     reactor: Arc<Reactor>,
+}
+
+#[macro_export]
+macro_rules! spawn {
+    ($($tt:tt)*) => {{
+        let fut = {$($tt)*};
+        let (sender, handle) = $crate::__private::JoinHandle::new();
+        let fut = async move { sender.send(fut.await).unwrap_or_default() };
+        $crate::__private::spawn_inner(fut).await;
+        handle
+    }};
 }
 
 impl Default for Runtime {
@@ -83,7 +125,8 @@ impl Runtime {
         let waker = Waker::from(Arc::new(MainWaker {
             ready: ready.clone(),
         }));
-        let mut cx = Context::from_waker(&waker);
+        let spawner = self.executor.clone().spawner();
+        let mut cx = Context::from_waker(&waker).with_spawner(&spawner);
 
         pin_mut!(fut);
 
