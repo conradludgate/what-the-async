@@ -4,12 +4,14 @@
 #![feature(layout_for_ptr, set_ptr_value, ptr_const_cast)]
 
 use std::{
+    alloc::Layout,
     cell::RefCell,
     future::Future,
+    mem::ManuallyDrop,
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker, RawSpawner, RawSpawnerVTable, Spawner},
-    thread::Thread, mem::ManuallyDrop, alloc::Layout,
+    task::{Context, Poll, RawSpawner, RawSpawnerVTable, Spawner, Wake, Waker},
+    thread::Thread,
 };
 
 use crossbeam_queue::SegQueue;
@@ -152,14 +154,20 @@ fn raw_spawner(spawner: Arc<Executor>) -> RawSpawner {
     }
 
     // Wake by value, moving the Arc into the Wake::wake function
-    unsafe fn spawn(spawner: *const (), future: *const (dyn Future<Output = ()> + Send + Sync + 'static)) {
+    unsafe fn spawn(
+        spawner: *const (),
+        future: *const (dyn Future<Output = ()> + Send + Sync + 'static),
+    ) {
         let spawner = unsafe { Arc::from_raw(spawner as *const Executor) };
         let future = Pin::new_unchecked(copy_to_box(future));
         spawner.wake(future);
     }
 
     // Wake by reference, wrap the spawner in ManuallyDrop to avoid dropping it
-    unsafe fn spawn_by_ref(spawner: *const (), future: *const (dyn Future<Output = ()> + Send + Sync + 'static)) {
+    unsafe fn spawn_by_ref(
+        spawner: *const (),
+        future: *const (dyn Future<Output = ()> + Send + Sync + 'static),
+    ) {
         let spawner = unsafe { ManuallyDrop::new(Arc::from_raw(spawner as *const Executor)) };
         let future = Pin::new_unchecked(copy_to_box(future));
         spawner.wake(future);

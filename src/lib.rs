@@ -13,13 +13,16 @@ use std::{
 
 use futures::pin_mut;
 use wta_executor::Executor;
-pub use wta_executor::{JoinHandle};
+pub use wta_executor::JoinHandle;
 use wta_reactor::Reactor;
 pub use wta_reactor::{net, timers};
 
 #[doc(hidden)]
 pub mod __private {
-    use std::{task::{Poll, Context}, pin::Pin};
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
 
     use futures::Future;
 
