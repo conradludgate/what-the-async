@@ -19,6 +19,7 @@ repository = "https://github.com/conradludgate/what-the-async"
 wta-reactor = { version = "=0.1.0", path = "reactor" }
 wta-executor = { version = "=0.1.0", path = "executor" }
 futures = "0.3"
+cl-generic-vec = { version = "0.5", path = "../generic-vec" }
 
 [dev-dependencies]
 rand = "0.8"

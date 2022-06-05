@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
@@ -15,7 +15,20 @@ use std::{
 use crossbeam_queue::SegQueue;
 use futures::{channel::oneshot, FutureExt};
 
-pub type Task = Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>;
+pub type Task = MaybeBoxMut<'static, dyn Future<Output = ()> + Send + Sync>;
+
+pub enum MaybeBoxMut<'a, F: ?Sized + 'a> {
+    Boxed(Pin<Box<F>>),
+    Borrow(Pin<&'a mut F>),
+}
+impl<'a, F: ?Sized + 'a> MaybeBoxMut<'a, F> {
+    fn as_pin_mut(&mut self) -> Pin<&mut F> {
+        match *self {
+            MaybeBoxMut::Boxed(ref mut b) => b.as_mut(),
+            MaybeBoxMut::Borrow(ref mut b) => b.as_mut(),
+        }
+    }
+}
 
 thread_local! {
     static EXECUTOR: RefCell<Option<Arc<Executor>>> = RefCell::new(None);
@@ -37,6 +50,15 @@ where
     F::Output: Send,
 {
     context(|e| e.spawn(fut))
+}
+
+/// # Safety
+/// The future must not drop while the task is running
+pub unsafe fn spawn_mut<'a, F>(fut: Pin<&'a mut F>)
+where
+    F: Future<Output = ()> + Send + Sync + 'a,
+{
+    context(|e| e.spawn_mut(fut));
 }
 
 #[derive(Default)]
@@ -80,7 +102,7 @@ impl Executor {
         let waker = Waker::from(wake.clone());
         let mut cx = Context::from_waker(&waker);
 
-        if task.as_mut().poll(&mut cx).is_pending() {
+        if task.as_pin_mut().poll(&mut cx).is_pending() {
             wake.task.lock().unwrap().replace(task);
         }
     }
@@ -95,10 +117,23 @@ impl Executor {
         // Pin the future. Also wrap it s.t. it sends it's output over the channel
         let fut = Box::pin(fut.map(|out| sender.send(out).unwrap_or_default()));
         // insert the task into the runtime and signal that it is ready for processing
-        self.wake(fut);
+        self.wake(MaybeBoxMut::Boxed(fut));
 
         // return the handle to the spawner so that it can be `await`ed with it's output value
         handle
+    }
+
+    /// # Safety
+    /// The future must not drop while the task is running
+    pub unsafe fn spawn_mut<'a, F>(&self, fut: Pin<&'a mut F>)
+    where
+        F: Future<Output = ()> + Send + Sync + 'a,
+    {
+        let static_fut = std::mem::transmute::<
+            Pin<&'a mut (dyn Future<Output = ()> + Send + Sync)>,
+            Pin<&'static mut (dyn Future<Output = ()> + Send + Sync)>,
+        >(fut);
+        self.wake(MaybeBoxMut::Borrow(static_fut));
     }
 }
 
