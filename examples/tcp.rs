@@ -5,7 +5,7 @@ use what_the_async as wta;
 use what_the_async::net::{TcpListener, TcpStream};
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let runtime = wta::Runtime::default();
+    let mut runtime = wta::Runtime::default();
     runtime.block_on(start())
 }
 

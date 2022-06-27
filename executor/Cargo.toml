@@ -10,4 +10,4 @@ repository = "https://github.com/conradludgate/what-the-async"
 
 [dependencies]
 futures = "0.3"
-crossbeam-queue = "0.3.5"
+crossbeam = "0.8.1"

@@ -9,6 +9,7 @@ repository = "https://github.com/conradludgate/what-the-async"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+wta-executor = { version = "=0.1.0", path = "../executor" }
 futures = "0.3"
 mio = { version = "0.8", features = ["os-poll", "net"] }
 sharded-slab = "0.1.4"

@@ -5,7 +5,7 @@ use rand::Rng;
 use what_the_async as wta;
 
 fn main() {
-    let runtime = wta::Runtime::default();
+    let mut runtime = wta::Runtime::default();
     let time = Instant::now();
     println!("output {:?}", runtime.block_on(start()));
     println!("took {:?}", time.elapsed());
@@ -29,6 +29,10 @@ async fn spawn_task(i: usize) -> Duration {
             thread_id = std::thread::current().id()
         );
         wta::timers::Sleep::duration(dur).await;
+        println!(
+            "task {i}, thread {thread_id:?}, done",
+            thread_id = std::thread::current().id()
+        );
         dur
     })
     .await

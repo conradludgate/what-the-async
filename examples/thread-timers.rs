@@ -9,7 +9,7 @@ use futures::future::join_all;
 use rand::Rng;
 
 fn main() {
-    let runtime = what_the_async::Runtime::default();
+    let mut runtime = what_the_async::Runtime::default();
     let time = Instant::now();
     println!("output {:?}", runtime.block_on(start()));
     println!("took {:?}", time.elapsed());

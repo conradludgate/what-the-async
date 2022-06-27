@@ -2,12 +2,56 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use mio::{event::Source, Token};
 use sharded_slab::Slab;
 use std::{
+    cell::RefCell,
     ops::{Deref, DerefMut},
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::Duration,
 };
+use wta_executor::{Park, Unpark};
 
-use crate::{context, Reactor};
+const WAKE_TOKEN: Token = Token(usize::MAX);
+
+pub struct Driver {
+    os: Os,
+    waker: Arc<mio::Waker>,
+}
+
+impl Default for Driver {
+    fn default() -> Self {
+        let os = Os::default();
+        os.driver()
+    }
+}
+
+impl Park for Driver {
+    type Unpark = Waker;
+
+    fn unpark(&self) -> Self::Unpark {
+        Waker(self.waker.clone())
+    }
+
+    fn park(&mut self) {
+        // dbg!("io park");
+        self.os.process(None);
+    }
+
+    fn park_timeout(&mut self, duration: Duration) {
+        // dbg!("io park", &duration);
+        self.os.process(Some(duration));
+    }
+
+    fn register(&self) {
+        OS.with(|r| *r.borrow_mut() = Some(self.os.registry.clone()));
+    }
+}
+
+pub struct Waker(Arc<mio::Waker>);
+impl Unpark for Waker {
+    fn unpark(&self) {
+        // dbg!("io wakeup");
+        self.0.wake().unwrap();
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Event(u8);
@@ -38,38 +82,47 @@ impl From<&mio::event::Event> for Event {
 }
 
 pub(crate) struct Os {
-    pub poll: RwLock<mio::Poll>,
-    pub events: RwLock<mio::Events>,
-    pub tasks: Slab<UnboundedSender<Event>>,
+    pub poll: mio::Poll,
+    pub events: mio::Events,
+    registry: Arc<Registry>,
 }
 
 impl Default for Os {
     fn default() -> Self {
+        let poll = mio::Poll::new().unwrap();
+        let registry = poll.registry().try_clone().unwrap();
         Self {
-            // token: AtomicUsize::new(0),
-            poll: RwLock::new(mio::Poll::new().unwrap()),
-            events: RwLock::new(mio::Events::with_capacity(128)),
-            tasks: Slab::new(),
+            poll,
+            events: mio::Events::with_capacity(128),
+            registry: Arc::new(Registry {
+                registry,
+                tasks: Slab::new(),
+            }),
         }
     }
 }
 
 impl Os {
+    pub fn driver(self) -> Driver {
+        let waker = Arc::new(mio::Waker::new(&self.registry.registry, WAKE_TOKEN).unwrap());
+        Driver { os: self, waker }
+    }
+
     /// Polls the OS for new events, and dispatches those to any awaiting tasks
-    pub(crate) fn process(&self) {
-        {
-            let mut events = self.events.write().unwrap();
-            let mut poll = self.poll.write().unwrap();
-            poll.poll(&mut events, Some(Duration::from_micros(100)))
-                .unwrap();
+    pub(crate) fn process(&mut self, duration: Option<Duration>) {
+        match self.poll.poll(&mut self.events, duration) {
+            Ok(_) => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => return,
+            Err(e) => Err(e).unwrap(),
         }
 
-        for event in &*self.events.read().unwrap() {
-            if let Some(sender) = self.tasks.get(event.token().0) {
+        for event in &self.events {
+            // dbg!("os event found", event.token());
+            if let Some(sender) = self.registry.tasks.get(event.token().0) {
                 if sender.unbounded_send(event.into()).is_err() {
                     // error means the receiver was dropped
                     // which means the registration should have been de-registered
-                    self.tasks.remove(event.token().0);
+                    self.registry.tasks.remove(event.token().0);
                 }
             }
         }
@@ -77,7 +130,7 @@ impl Os {
 }
 
 pub(crate) struct Registration<S: Source> {
-    pub reactor: Arc<Reactor>,
+    registry: Arc<Registry>,
     pub events: UnboundedReceiver<Event>,
     pub token: mio::Token,
     pub source: S,
@@ -99,18 +152,16 @@ impl<S: Source> DerefMut for Registration<S> {
 
 impl<S: Source> Registration<S> {
     pub fn new(mut source: S, interests: mio::Interest) -> std::io::Result<Self> {
-        let reactor = context(Arc::clone);
         let (sender, events) = unbounded();
-        let token = Token(reactor.os.tasks.insert(sender).unwrap());
-        {
-            let poll = reactor.os.poll.read().unwrap();
-            poll.registry().register(&mut source, token, interests)?;
-        }
-        Ok(Self {
-            reactor,
-            events,
-            token,
-            source,
+        context(|r| {
+            let token = Token(r.tasks.insert(sender).unwrap());
+            r.registry.register(&mut source, token, interests)?;
+            Ok(Self {
+                registry: r.clone(),
+                events,
+                token,
+                source,
+            })
         })
     }
 }
@@ -118,9 +169,25 @@ impl<S: Source> Registration<S> {
 impl<S: Source> Drop for Registration<S> {
     fn drop(&mut self) {
         // deregister the source from the OS
-        let poll = self.reactor.os.poll.read().unwrap();
-        poll.registry().deregister(&mut self.source).unwrap();
+        self.registry.registry.deregister(&mut self.source).unwrap();
         // remove the event dispatcher
-        self.reactor.os.tasks.remove(self.token.0);
+        self.registry.tasks.remove(self.token.0);
     }
+}
+
+struct Registry {
+    registry: mio::Registry,
+    tasks: Slab<UnboundedSender<Event>>,
+}
+
+thread_local! {
+    static OS: RefCell<Option<Arc<Registry>>> = RefCell::new(None);
+}
+
+fn context<R>(f: impl FnOnce(&Arc<Registry>) -> R) -> R {
+    OS.with(|r| {
+        let r = r.borrow();
+        let r = r.as_ref().expect("called outside of an reactor context");
+        f(r)
+    })
 }

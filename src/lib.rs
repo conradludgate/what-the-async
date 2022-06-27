@@ -3,38 +3,89 @@
 #![allow(clippy::missing_panics_doc)]
 
 use std::{
+    cell::RefCell,
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     task::{Context, Wake, Waker},
+    thread::{self, Thread},
 };
 
+mod driver;
+
+use crossbeam::deque::{Injector, Worker};
+use driver::{Parker, Unparker};
 use futures::pin_mut;
-use wta_executor::Executor;
-pub use wta_executor::{spawn, JoinHandle};
-use wta_reactor::Reactor;
+pub use wta_executor::JoinHandle;
+use wta_executor::{GlobalExecutor, LocalExecutor, Park};
+use wta_reactor::Driver;
 pub use wta_reactor::{net, timers};
 
 #[derive(Clone)]
 pub struct Runtime {
-    executor: Arc<Executor>,
-    reactor: Arc<Reactor>,
+    global: GlobalExecutor<Unparker>,
+    parker: Parker,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        let executor: Arc<Executor> = Arc::default();
-        let reactor: Arc<Reactor> = Arc::default();
-        let this = Self { executor, reactor };
+        // queues
+        let injector = Arc::new(Injector::new());
+        let mut stealers = vec![];
+        let mut unparkers = vec![];
+
+        let mut workers = vec![];
+
+        let driver = Driver::default();
+        let parker = Parker::new(driver);
+
+        // let executor: Arc<Executor> = Arc::default();
+        // let reactor: Arc<Reactor> = Arc::default();
+        // let this = Self { executor, reactor };
 
         let n = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
-        for i in 0..n {
-            this.spawn_worker(format!("wta-worker-{}", i));
+        for _ in 0..n {
+            let worker = Worker::new_fifo();
+            stealers.push(worker.stealer());
+
+            let parker = parker.clone();
+            unparkers.push(parker.unpark());
+
+            workers.push((worker, parker));
+
+            // this.spawn_worker(format!("wta-worker-{}", i));
         }
 
-        this
+        let global = GlobalExecutor::new(injector, stealers, unparkers);
+
+        for (i, (worker, parker)) in workers.into_iter().enumerate() {
+            let mut local = LocalExecutor::new(i, worker, global.clone(), parker);
+            let global = global.clone();
+            std::thread::Builder::new()
+                .name(format!("wta-worker-{}", i))
+                .spawn(move || {
+                    // eprintln!("thread {thread:?} {i}", thread = std::thread::current());
+                    // this.register();
+                    GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(global));
+                    local.register();
+
+                    let mut i = 0;
+                    loop {
+                        local.poll_once();
+
+                        i += 1;
+                        i %= 61;
+                        if i == 0 {
+                            local.maintenance();
+                        }
+                    }
+                })
+                .unwrap();
+        }
+
+        Self { global, parker }
     }
 }
 
@@ -54,34 +105,26 @@ where
     handle
 }
 
+pub fn spawn<F>(fut: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + Sync + 'static,
+    F::Output: Send,
+{
+    context(|e| e.spawn(fut))
+}
+
 impl Runtime {
-    fn register(&self) {
-        self.executor.register();
-        self.reactor.register();
-    }
-
-    pub fn spawn_worker(&self, name: String) {
-        let this = self.clone();
-        std::thread::Builder::new()
-            .name(name)
-            .spawn(move || {
-                this.register();
-                loop {
-                    this.executor.clone().poll_once();
-                }
-            })
-            .unwrap();
-    }
-
-    pub fn block_on<F>(&self, fut: F) -> F::Output
+    pub fn block_on<F>(&mut self, fut: F) -> F::Output
     where
         F: Future,
     {
-        self.register();
+        GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(self.global.clone()));
+        self.parker.register();
 
         let ready = Arc::new(AtomicBool::new(true));
         let waker = Waker::from(Arc::new(MainWaker {
             ready: ready.clone(),
+            thread: std::thread::current(),
         }));
         let mut cx = Context::from_waker(&waker);
 
@@ -95,7 +138,7 @@ impl Runtime {
                     std::task::Poll::Pending => ready.store(false, Ordering::SeqCst),
                 }
             } else {
-                self.reactor.book_keeping();
+                thread::park();
             }
         }
     }
@@ -105,16 +148,32 @@ impl Runtime {
         F: Future + Sync + Send + 'static,
         F::Output: Send,
     {
-        self.executor.spawn(fut)
+        self.global.spawn(fut)
     }
 }
 
 struct MainWaker {
     ready: Arc<AtomicBool>,
+    thread: Thread,
 }
 
 impl Wake for MainWaker {
     fn wake(self: Arc<Self>) {
         self.ready.store(true, Ordering::Relaxed);
+        self.thread.unpark();
     }
+}
+
+thread_local! {
+    static GLOBAL_EXECUTOR: RefCell<Option<GlobalExecutor<Unparker>>> = RefCell::new(None);
+}
+
+fn context<R>(f: impl FnOnce(&GlobalExecutor<Unparker>) -> R) -> R {
+    GLOBAL_EXECUTOR.with(|e| {
+        let e = e.borrow();
+        let e = e
+            .as_ref()
+            .expect("spawn called outside of an executor context");
+        f(e)
+    })
 }

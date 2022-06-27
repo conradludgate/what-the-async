@@ -10,7 +10,7 @@ repository = "https://github.com/conradludgate/what-the-async"
 
 [dependencies]
 wta-reactor = { version = "=0.1.0", path = "../reactor" }
-wta-executor = { version = "=0.1.0", path = "../executor" }
+what-the-async = { version = "=0.1.0", path = ".." }
 futures = "0.3"
 hyper = { version = "0.14", features = ["server"] }
 tokio = { version = "1.0", default-features = false }

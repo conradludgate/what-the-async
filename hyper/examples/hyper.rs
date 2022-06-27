@@ -10,7 +10,7 @@ use what_the_async::timers::Sleep;
 use wta_hyper::{AddrStream, Executor, Incoming};
 
 fn main() {
-    let runtime = what_the_async::Runtime::default();
+    let mut runtime = what_the_async::Runtime::default();
     runtime.block_on(start())
 }
 
