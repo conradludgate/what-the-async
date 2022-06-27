@@ -19,14 +19,15 @@ use crossbeam::deque::{Injector, Worker};
 use driver::{Parker, Unparker};
 use futures::pin_mut;
 pub use wta_executor::JoinHandle;
-use wta_executor::{GlobalExecutor, LocalExecutor, Park};
+use wta_executor::{GlobalExecutor, LocalExecutor, Park, Handle};
 use wta_reactor::Driver;
 pub use wta_reactor::{net, timers};
 
 #[derive(Clone)]
 pub struct Runtime {
     global: GlobalExecutor<Unparker>,
-    parker: Parker,
+    handle: <Driver as Park>::Handle,
+    // parker: Parker,
 }
 
 impl Default for Runtime {
@@ -39,6 +40,7 @@ impl Default for Runtime {
         let mut workers = vec![];
 
         let driver = Driver::default();
+        let handle = driver.handle();
         let parker = Parker::new(driver);
 
         // let executor: Arc<Executor> = Arc::default();
@@ -63,13 +65,14 @@ impl Default for Runtime {
         for (i, (worker, parker)) in workers.into_iter().enumerate() {
             let mut local = LocalExecutor::new(i, worker, global.clone(), parker);
             let global = global.clone();
+            let handle = handle.clone();
             std::thread::Builder::new()
                 .name(format!("wta-worker-{}", i))
                 .spawn(move || {
                     // eprintln!("thread {thread:?} {i}", thread = std::thread::current());
                     // this.register();
                     GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(global));
-                    local.register();
+                    handle.register();
 
                     let mut i = 0;
                     loop {
@@ -85,7 +88,7 @@ impl Default for Runtime {
                 .unwrap();
         }
 
-        Self { global, parker }
+        Self { global, handle }
     }
 }
 
@@ -119,7 +122,7 @@ impl Runtime {
         F: Future,
     {
         GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(self.global.clone()));
-        self.parker.register();
+        self.handle.register();
 
         let ready = Arc::new(AtomicBool::new(true));
         let waker = Waker::from(Arc::new(MainWaker {

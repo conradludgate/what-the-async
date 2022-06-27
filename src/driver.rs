@@ -105,8 +105,10 @@ impl Park for Parker {
         }
     }
 
-    fn register(&self) {
-        self.inner.shared.driver.lock().unwrap().register();
+    type Handle = <Driver as Park>::Handle;
+
+    fn handle(&self) -> Self::Handle {
+        self.inner.shared.driver.lock().unwrap().handle()
     }
 }
 

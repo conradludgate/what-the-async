@@ -43,12 +43,14 @@ use crossbeam::sync::{Parker, Unparker};
 pub trait Park {
     /// Unpark handle type for the `Park` implementation.
     type Unpark: Unpark;
+    type Handle: Handle;
 
     /// Error returned by `park`.
     // type Error: Debug;
 
     /// Gets a new `Unpark` handle associated with this `Park` instance.
     fn unpark(&self) -> Self::Unpark;
+    fn handle(&self) -> Self::Handle;
 
     /// Blocks the current thread unless or until the token is available.
     ///
@@ -81,7 +83,9 @@ pub trait Park {
 
     // /// Releases all resources held by the parker for proper leak-free shutdown.
     // fn shutdown(&mut self);
+}
 
+pub trait Handle: Clone {
     fn register(&self);
 }
 
@@ -114,10 +118,12 @@ impl Unpark for Arc<dyn Unpark> {
 
 impl Park for Parker {
     type Unpark = Unparker;
+    type Handle = ();
 
     fn unpark(&self) -> Self::Unpark {
         self.unparker().clone()
     }
+    fn handle(&self) -> Self::Handle {}
 
     fn park(&mut self) {
         Parker::park(self);
@@ -126,12 +132,21 @@ impl Park for Parker {
     fn park_timeout(&mut self, duration: Duration) {
         Parker::park_timeout(self, duration);
     }
-
-    fn register(&self) {}
 }
 
 impl Unpark for Unparker {
     fn unpark(&self) {
         self.unpark();
+    }
+}
+
+impl Handle for () {
+    fn register(&self) {}
+}
+
+impl<A: Handle, B: Handle> Handle for (A, B) {
+    fn register(&self) {
+        self.0.register();
+        self.1.register();
     }
 }

@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use wta_executor::{Park, Unpark};
+use wta_executor::{Handle, Park, Unpark};
 
 const WAKE_TOKEN: Token = Token(usize::MAX);
 
@@ -20,6 +20,12 @@ impl Default for Driver {
     fn default() -> Self {
         let os = Os::default();
         os.driver()
+    }
+}
+
+impl Driver {
+    pub fn handle(&self) -> Arc<Registry> {
+        self.os.registry.clone()
     }
 }
 
@@ -40,8 +46,10 @@ impl Park for Driver {
         self.os.process(Some(duration));
     }
 
-    fn register(&self) {
-        OS.with(|r| *r.borrow_mut() = Some(self.os.registry.clone()));
+    type Handle = IoHandle;
+
+    fn handle(&self) -> Self::Handle {
+        IoHandle(self.os.registry.clone())
     }
 }
 
@@ -175,13 +183,21 @@ impl<S: Source> Drop for Registration<S> {
     }
 }
 
-struct Registry {
+pub struct Registry {
     registry: mio::Registry,
     tasks: Slab<UnboundedSender<Event>>,
 }
 
 thread_local! {
     static OS: RefCell<Option<Arc<Registry>>> = RefCell::new(None);
+}
+
+#[derive(Clone)]
+pub struct IoHandle(Arc<Registry>);
+impl Handle for IoHandle {
+    fn register(&self) {
+        OS.with(|r| *r.borrow_mut() = Some(self.0.clone()));
+    }
 }
 
 fn context<R>(f: impl FnOnce(&Arc<Registry>) -> R) -> R {

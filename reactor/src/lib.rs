@@ -2,7 +2,7 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
 
-mod io;
+pub mod io;
 pub mod net;
 pub mod timers;
 

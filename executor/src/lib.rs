@@ -13,7 +13,7 @@ use std::{
 
 use crossbeam::deque::{Injector, Steal, Stealer, Worker};
 use futures::{channel::oneshot, FutureExt};
-pub use parker::{Park, Unpark};
+pub use parker::{Park, Unpark, Handle};
 
 mod parker;
 
@@ -43,10 +43,6 @@ impl<P: Park> LocalExecutor<P> {
 
     pub fn maintenance(&mut self) {
         self.parker.park_timeout(Duration::from_secs(0));
-    }
-
-    pub fn register(&self) {
-        self.parker.register();
     }
 }
 
@@ -177,22 +173,6 @@ impl<P: Park> LocalExecutor<P> {
             wake.task.lock().unwrap().replace(task);
         }
     }
-
-    // pub fn spawn<F>(&self, fut: F) -> JoinHandle<F::Output>
-    // where
-    //     F: Future + Send + Sync + 'static,
-    //     F::Output: Send,
-    // {
-    //     let (sender, handle) = JoinHandle::new();
-
-    //     // Pin the future. Also wrap it s.t. it sends it's output over the channel
-    //     let fut = Box::pin(fut.map(|out| sender.send(out).unwrap_or_default()));
-    //     // insert the task into the runtime and signal that it is ready for processing
-    //     self.queue.push(fut);
-
-    //     // return the handle to the spawner so that it can be `await`ed with it's output value
-    //     handle
-    // }
 }
 
 struct TaskWaker<U> {

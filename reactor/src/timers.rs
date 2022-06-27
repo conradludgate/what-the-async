@@ -1,13 +1,14 @@
 use std::{
+    cell::RefCell,
     cmp::Reverse,
     pin::Pin,
-    sync::{Mutex, MutexGuard, PoisonError, Arc},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     task::{Context, Poll, Waker},
-    time::{Duration, Instant}, cell::RefCell,
+    time::{Duration, Instant},
 };
 
 use futures::Future;
-use wta_executor::Park;
+use wta_executor::{Handle, Park};
 
 #[derive(Default)]
 pub struct Driver<P: Park> {
@@ -36,7 +37,7 @@ impl<P: Park> Driver<P> {
             None => self.park.park(),
         }
 
-        for task in &*self.queue {
+        for task in self.queue.iter() {
             // dbg!("timer task finished");
             task.wake();
         }
@@ -60,34 +61,31 @@ impl<P: Park> Park for Driver<P> {
         self.park_internal(Some(duration));
     }
 
-    fn register(&self) {
-        TIMERS.with(|r| *r.borrow_mut() = Some(self.queue.clone()));
+    type Handle = (TimerHandle, P::Handle);
+
+    fn handle(&self) -> Self::Handle {
+        (TimerHandle(self.queue.clone()), self.park.handle())
     }
 }
 
 #[derive(Default)]
-pub(crate) struct Queue(Mutex<Vec<(Instant, Waker)>>);
+struct Queue(Mutex<Vec<(Instant, Waker)>>);
 
 impl Queue {
-    pub fn insert(&self, instant: Instant, task: Waker) {
+    pub(crate) fn insert(&self, instant: Instant, task: Waker) {
         let mut queue = self.0.lock().unwrap();
         let index = match queue.binary_search_by_key(&Reverse(instant), |e| Reverse(e.0)) {
             Ok(index) | Err(index) => index,
         };
         queue.insert(index, (instant, task));
     }
-}
 
-impl<'a> IntoIterator for &'a Queue {
-    type Item = Waker;
-    type IntoIter = QueueIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
+    pub(crate) fn iter(&self) -> QueueIter<'_> {
         QueueIter(self.0.lock().unwrap(), Instant::now())
     }
 }
 
-pub(crate) struct QueueIter<'a>(MutexGuard<'a, Vec<(Instant, Waker)>>, Instant);
+pub struct QueueIter<'a>(MutexGuard<'a, Vec<(Instant, Waker)>>, Instant);
 impl<'a> Iterator for QueueIter<'a> {
     type Item = Waker;
 
@@ -141,7 +139,16 @@ thread_local! {
     static TIMERS: RefCell<Option<Arc<Queue>>> = RefCell::new(None);
 }
 
-pub(crate) fn context<R>(f: impl FnOnce(&Arc<Queue>) -> R) -> R {
+#[derive(Clone)]
+pub struct TimerHandle(Arc<Queue>);
+impl Handle for TimerHandle {
+    fn register(&self) {
+        TIMERS.with(|r| *r.borrow_mut() = Some(self.0.clone()));
+    }
+
+}
+
+fn context<R>(f: impl FnOnce(&Arc<Queue>) -> R) -> R {
     TIMERS.with(|r| {
         let r = r.borrow();
         let r = r.as_ref().expect("called outside of an reactor context");
