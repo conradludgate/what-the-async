@@ -1,4 +1,3 @@
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use mio::{event::Source, Token};
 use sharded_slab::Slab;
 use std::{
@@ -6,6 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
     time::Duration,
 };
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 #[cfg(loom)]
 use loom::{sync::Arc, thread_local};

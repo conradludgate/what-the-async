@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_core::{Stream, ready};
+use futures_core::{ready, Stream};
 use futures_io::{AsyncRead, AsyncWrite};
 use mio::Interest;
 

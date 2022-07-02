@@ -13,7 +13,10 @@ use loom::{
     thread_local,
 };
 #[cfg(not(loom))]
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    thread_local,
+};
 
 use wta_executor::{Handle, Park, Unpark};
 

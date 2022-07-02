@@ -1,3 +1,4 @@
+#![allow(clippy::module_name_repetitions)]
 use crate::{Park, Unpark};
 
 use std::sync::{atomic::Ordering::SeqCst, PoisonError};
