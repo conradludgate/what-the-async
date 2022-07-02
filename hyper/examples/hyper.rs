@@ -10,7 +10,7 @@ use what_the_async::timers::Sleep;
 use wta_hyper::{AddrStream, Executor, Incoming};
 
 fn main() {
-    let mut runtime = what_the_async::Runtime::default();
+    let mut runtime = what_the_async::Runtime::new(1);
     runtime.block_on(start())
 }
 
@@ -33,6 +33,7 @@ async fn start() {
 async fn handle(_addr: SocketAddr, _req: Request<Body>) -> Result<Response<Body>, Infallible> {
     use rand::Rng;
     let ms = rand::thread_rng().gen_range(50..100);
+    // println!("sleeping for {ms}ms");
     Sleep::duration(Duration::from_millis(ms)).await;
 
     Ok(Response::new(Body::from("Hello World")))

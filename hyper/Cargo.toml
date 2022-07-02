@@ -9,7 +9,7 @@ repository = "https://github.com/conradludgate/what-the-async"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wta-reactor = { version = "=0.1.0", path = "../reactor" }
+wta-reactor = { version = "=0.1.0", path = "../reactor", features = ["io"] }
 what-the-async = { version = "=0.1.0", path = ".." }
 futures = "0.3"
 hyper = { version = "0.14", features = ["server"] }

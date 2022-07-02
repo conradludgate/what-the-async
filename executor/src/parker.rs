@@ -34,10 +34,12 @@
 //! * `park_timeout` does the same as `park` but allows specifying a maximum
 //!   time to block the thread for.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam::sync::{Parker, Unparker};
+#[cfg(loom)]
+use loom::sync::Arc;
+#[cfg(not(loom))]
+use std::sync::Arc;
 
 /// Blocks the current thread.
 pub trait Park {
@@ -85,8 +87,8 @@ pub trait Park {
     // fn shutdown(&mut self);
 }
 
-pub trait Handle: Clone {
-    fn register(&self);
+pub trait Handle: Clone + Send + Sync + 'static {
+    fn register(self);
 }
 
 /// Unblock a thread blocked by the associated `Park` instance.
@@ -116,37 +118,13 @@ impl Unpark for Arc<dyn Unpark> {
     }
 }
 
-impl Park for Parker {
-    type Unpark = Unparker;
-    type Handle = ();
-
-    fn unpark(&self) -> Self::Unpark {
-        self.unparker().clone()
-    }
-    fn handle(&self) -> Self::Handle {}
-
-    fn park(&mut self) {
-        Parker::park(self);
-    }
-
-    fn park_timeout(&mut self, duration: Duration) {
-        Parker::park_timeout(self, duration);
-    }
-}
-
-impl Unpark for Unparker {
-    fn unpark(&self) {
-        self.unpark();
+impl<A: Handle, B: Handle> Handle for (A, B) {
+    fn register(self) {
+        self.0.register();
+        self.1.register();
     }
 }
 
 impl Handle for () {
-    fn register(&self) {}
-}
-
-impl<A: Handle, B: Handle> Handle for (A, B) {
-    fn register(&self) {
-        self.0.register();
-        self.1.register();
-    }
+    fn register(self) {}
 }

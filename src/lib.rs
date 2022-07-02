@@ -2,37 +2,48 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::missing_panics_doc)]
 
+use std::{cell::RefCell, future::Future, sync::atomic::Ordering, task::Context};
+
+#[cfg(loom)]
+use loom::{
+    sync::{atomic::AtomicBool, Arc},
+    thread, thread_local,
+};
+#[cfg(not(loom))]
 use std::{
-    cell::RefCell,
-    future::Future,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    task::{Context, Wake, Waker},
-    thread::{self, Thread},
+    sync::{atomic::AtomicBool, Arc},
+    thread, thread_local,
 };
 
 mod driver;
 
-use crossbeam::deque::{Injector, Worker};
+use crossbeam_deque::{Injector, Worker};
 use driver::{Parker, Unparker};
-use futures::pin_mut;
+use futures_util::pin_mut;
 pub use wta_executor::JoinHandle;
-use wta_executor::{GlobalExecutor, LocalExecutor, Park, Handle};
+use wta_executor::{GlobalExecutor, Handle, LocalExecutor, Park, Unpark};
+#[cfg(feature = "io")]
+pub use wta_reactor::net;
+pub use wta_reactor::timers;
 use wta_reactor::Driver;
-pub use wta_reactor::{net, timers};
 
 #[derive(Clone)]
 pub struct Runtime {
     global: GlobalExecutor<Unparker>,
     handle: <Driver as Park>::Handle,
-    // parker: Parker,
+    parker: Parker,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        // queues
+        let n = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
+        Self::new(n)
+    }
+}
+
+impl Runtime {
+    #[must_use]
+    pub fn new(n_workers: usize) -> Self {
         let injector = Arc::new(Injector::new());
         let mut stealers = vec![];
         let mut unparkers = vec![];
@@ -43,12 +54,7 @@ impl Default for Runtime {
         let handle = driver.handle();
         let parker = Parker::new(driver);
 
-        // let executor: Arc<Executor> = Arc::default();
-        // let reactor: Arc<Reactor> = Arc::default();
-        // let this = Self { executor, reactor };
-
-        let n = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
-        for _ in 0..n {
+        for _ in 0..n_workers {
             let worker = Worker::new_fifo();
             stealers.push(worker.stealer());
 
@@ -56,8 +62,6 @@ impl Default for Runtime {
             unparkers.push(parker.unpark());
 
             workers.push((worker, parker));
-
-            // this.spawn_worker(format!("wta-worker-{}", i));
         }
 
         let global = GlobalExecutor::new(injector, stealers, unparkers);
@@ -66,11 +70,9 @@ impl Default for Runtime {
             let mut local = LocalExecutor::new(i, worker, global.clone(), parker);
             let global = global.clone();
             let handle = handle.clone();
-            std::thread::Builder::new()
+            thread::Builder::new()
                 .name(format!("wta-worker-{}", i))
                 .spawn(move || {
-                    // eprintln!("thread {thread:?} {i}", thread = std::thread::current());
-                    // this.register();
                     GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(global));
                     handle.register();
 
@@ -88,7 +90,11 @@ impl Default for Runtime {
                 .unwrap();
         }
 
-        Self { global, handle }
+        Self {
+            global,
+            handle,
+            parker,
+        }
     }
 }
 
@@ -100,7 +106,7 @@ where
 {
     let (sender, handle) = JoinHandle::new();
 
-    std::thread::Builder::new()
+    thread::Builder::new()
         .spawn(move || sender.send(f()).unwrap_or_default())
         .unwrap();
 
@@ -122,13 +128,17 @@ impl Runtime {
         F: Future,
     {
         GLOBAL_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(self.global.clone()));
-        self.handle.register();
+        self.handle.clone().register();
 
         let ready = Arc::new(AtomicBool::new(true));
-        let waker = Waker::from(Arc::new(MainWaker {
+        let waker = Arc::new(MainWaker {
             ready: ready.clone(),
-            thread: std::thread::current(),
-        }));
+            thread: self.parker.unpark(),
+        });
+        #[cfg(not(loom))]
+        let waker = std::task::Waker::from(waker);
+        #[cfg(loom)]
+        let waker = wta_executor::loom_compat::waker(waker);
         let mut cx = Context::from_waker(&waker);
 
         pin_mut!(fut);
@@ -141,7 +151,7 @@ impl Runtime {
                     std::task::Poll::Pending => ready.store(false, Ordering::SeqCst),
                 }
             } else {
-                thread::park();
+                self.parker.park();
             }
         }
     }
@@ -157,13 +167,24 @@ impl Runtime {
 
 struct MainWaker {
     ready: Arc<AtomicBool>,
-    thread: Thread,
+    thread: Unparker,
 }
 
-impl Wake for MainWaker {
+#[cfg(not(loom))]
+impl std::task::Wake for MainWaker {
     fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
         self.ready.store(true, Ordering::Relaxed);
         self.thread.unpark();
+    }
+}
+#[cfg(loom)]
+impl wta_executor::loom_compat::Wake for MainWaker {
+    fn wake_by_ref(this: &Arc<Self>) {
+        this.ready.store(true, Ordering::Relaxed);
+        this.thread.unpark();
     }
 }
 
@@ -179,4 +200,49 @@ fn context<R>(f: impl FnOnce(&GlobalExecutor<Unparker>) -> R) -> R {
             .expect("spawn called outside of an executor context");
         f(e)
     })
+}
+
+#[cfg(loom)]
+#[cfg(test)]
+mod test_loom;
+
+#[cfg(loom)]
+#[cfg(test)]
+mod loom_tests {
+    #[test]
+    fn timers() {
+        use futures_util::future::join_all;
+        use std::time::Duration;
+
+        async fn spawn_task(i: usize) -> Duration {
+            crate::spawn(async move {
+                let dur = Duration::from_millis(100) * (i as u32);
+                println!(
+                    "task {i}, thread {thread_id:?}, dur {dur:?}",
+                    thread_id = std::thread::current().id()
+                );
+                crate::timers::Sleep::duration(dur).await;
+                println!(
+                    "task {i}, thread {thread_id:?}, done",
+                    thread_id = std::thread::current().id()
+                );
+                dur
+            })
+            .await
+        }
+
+        crate::test_loom::model(|| {
+            let mut runtime = crate::Runtime::new(2);
+            let dur: Duration = runtime.block_on(async {
+                let mut handles = vec![];
+                for i in 0..10 {
+                    let handle = spawn_task(i);
+                    handles.push(handle);
+                }
+                join_all(handles).await.into_iter().sum()
+            });
+
+            assert_eq!(dur, Duration::from_millis(4500));
+        });
+    }
 }

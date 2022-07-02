@@ -1,4 +1,4 @@
-// #![forbid(unsafe_code)]
+#![cfg_attr(not(loom), forbid(unsafe_code))]
 #![warn(clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
@@ -6,16 +6,31 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, PoisonError},
-    task::{Context, Poll, Wake, Waker},
+    sync::PoisonError,
+    task::{Context, Poll},
     time::Duration,
 };
 
-use crossbeam::deque::{Injector, Steal, Stealer, Worker};
-use futures::{channel::oneshot, FutureExt};
-pub use parker::{Park, Unpark, Handle};
+#[cfg(loom)]
+use loom::sync::{Arc, Mutex};
+#[cfg(loom)]
+pub mod loom_compat;
+#[cfg(not(loom))]
+use std::sync::{Arc, Mutex};
 
+fn arc_slice<T>(v: Vec<T>) -> Arc<[T]> {
+    let arc: std::sync::Arc<[T]> = v.into();
+    #[cfg(loom)]
+    let arc = Arc::from_std(arc);
+    arc
+}
+
+use crossbeam_deque::{Injector, Steal, Stealer, Worker};
+pub use parker::{Handle, Park, Unpark};
+
+mod oneshot;
 mod parker;
+pub mod thread;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>;
 
@@ -70,8 +85,8 @@ impl<U: Unpark> GlobalExecutor<U> {
         let len = threads.len();
         Self {
             queue,
-            stealers: stealers.into(),
-            threads: threads.into(),
+            stealers: arc_slice(stealers),
+            threads: arc_slice(threads),
             idle: Arc::new(Mutex::new(vec![false; len])),
         }
     }
@@ -84,9 +99,9 @@ impl<U: Unpark> GlobalExecutor<U> {
         let (sender, handle) = JoinHandle::new();
 
         // Pin the future. Also wrap it s.t. it sends it's output over the channel
-        let fut = Box::pin(fut.map(|out| {
-            sender.send(out).unwrap_or_default();
-        }));
+        let fut = Box::pin(async {
+            drop(sender.send(fut.await));
+        });
         // insert the task into the runtime and signal that it is ready for processing
         self.wake_one(fut);
 
@@ -115,7 +130,7 @@ impl<U: Unpark> GlobalExecutor<U> {
     }
 
     fn steal(&self, queue: &Worker<Task>) -> Steal<Task> {
-        // dbg!("steal");
+        dbg!("steal");
         self.queue
             .steal_batch_and_pop(queue)
             .or_else(|| self.stealers.iter().map(Stealer::steal).collect())
@@ -166,7 +181,10 @@ impl<P: Park> LocalExecutor<P> {
             task: Mutex::new(None),
             global: self.global.clone(),
         });
-        let waker = Waker::from(wake.clone());
+        #[cfg(not(loom))]
+        let waker = std::task::Waker::from(wake.clone());
+        #[cfg(loom)]
+        let waker = loom_compat::waker(wake.clone());
         let mut cx = Context::from_waker(&waker);
 
         if task.as_mut().poll(&mut cx).is_pending() {
@@ -180,14 +198,24 @@ struct TaskWaker<U> {
     task: Mutex<Option<Task>>,
 }
 
-impl<U: Unpark> Wake for TaskWaker<U> {
+#[cfg(not(loom))]
+impl<U: Unpark> std::task::Wake for TaskWaker<U> {
     fn wake(self: Arc<Self>) {
         self.wake_by_ref();
     }
     fn wake_by_ref(self: &Arc<Self>) {
-        // dbg!("wake task2");
+        dbg!("wake task2");
         if let Some(task) = self.task.lock().unwrap().take() {
             self.global.wake_one(task);
+        }
+    }
+}
+#[cfg(loom)]
+impl<U: Unpark> loom_compat::Wake for TaskWaker<U> {
+    fn wake_by_ref(this: &Arc<Self>) {
+        dbg!("wake task2");
+        if let Some(task) = this.task.lock().unwrap().take() {
+            this.global.wake_one(task);
         }
     }
 }
@@ -208,8 +236,8 @@ impl<R> Future for JoinHandle<R> {
     type Output = R;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // dbg!("poll join");
+        dbg!("poll join");
         // poll the inner channel for the spawned future's result
-        self.0.poll_unpin(cx).map(Result::unwrap)
+        Pin::new(&mut self.0).poll(cx).map(Result::unwrap)
     }
 }

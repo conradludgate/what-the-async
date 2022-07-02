@@ -6,7 +6,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{ready, AsyncRead, AsyncWrite, Stream, StreamExt};
+use futures_core::{Stream, ready};
+use futures_io::{AsyncRead, AsyncWrite};
 use mio::Interest;
 
 use crate::io::Registration;
@@ -41,7 +42,7 @@ impl Stream for Accept {
     type Item = io::Result<(TcpStream, SocketAddr)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if ready!(self.registration.events.poll_next_unpin(cx)).is_none() {
+        if ready!(Pin::new(&mut self.registration.events).poll_recv(cx)).is_none() {
             return Poll::Ready(None);
         }
         match self.registration.accept() {
@@ -73,7 +74,7 @@ impl TcpStream {
     }
 
     fn poll_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let event = match ready!(self.registration.events.poll_next_unpin(cx)) {
+        let event = match ready!(Pin::new(&mut self.registration.events).poll_recv(cx)) {
             Some(event) => event,
             None => {
                 return Poll::Ready(Err(io::Error::new(

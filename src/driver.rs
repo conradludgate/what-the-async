@@ -145,7 +145,7 @@ impl Inner {
     }
 
     fn park_condvar(&self) {
-        // dbg!("park_condvar");
+        dbg!("park_condvar");
         // Otherwise we need to coordinate going to sleep
         let mut m = self.mutex.lock().unwrap_or_else(PoisonError::into_inner);
 
@@ -216,7 +216,7 @@ impl Inner {
     }
 
     fn unpark(&self) {
-        // dbg!("unpark thread");
+        dbg!("unpark thread");
         // To ensure the unparked thread will observe any writes we made before
         // this call, we must perform a release operation that `park` can
         // synchronize with. To do that we must write `NOTIFIED` even if `state`

@@ -1,26 +1,36 @@
 use std::{
     cell::RefCell,
     cmp::Reverse,
+    future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
-use futures::Future;
-use wta_executor::{Handle, Park};
+#[cfg(loom)]
+use loom::{
+    sync::{Arc, Mutex},
+    thread_local,
+};
+#[cfg(not(loom))]
+use std::sync::{Arc, Mutex};
+
+use wta_executor::{Handle, Park, Unpark};
 
 #[derive(Default)]
 pub struct Driver<P: Park> {
-    queue: Arc<Queue>,
+    timers: Queue,
+    global: Arc<Mutex<Queue>>,
     park: P,
 }
 
 impl<P: Park> Driver<P> {
     fn park_internal(&mut self, duration: Option<Duration>) {
+        {
+            self.timers.0.append(&mut self.global.lock().unwrap().0);
+        }
         let time = {
-            let lock = self.queue.0.lock().unwrap_or_else(PoisonError::into_inner);
-            match lock.first() {
+            match self.timers.0.first() {
                 Some((instant, _)) => instant.checked_duration_since(Instant::now()),
                 None => None,
             }
@@ -37,8 +47,8 @@ impl<P: Park> Driver<P> {
             None => self.park.park(),
         }
 
-        for task in self.queue.iter() {
-            // dbg!("timer task finished");
+        for task in self.timers.iter() {
+            dbg!("timer task finished");
             task.wake();
         }
     }
@@ -52,40 +62,51 @@ impl<P: Park> Park for Driver<P> {
     }
 
     fn park(&mut self) {
-        // dbg!("timer park");
+        dbg!("timer park");
         self.park_internal(None);
     }
 
     fn park_timeout(&mut self, duration: Duration) {
-        // dbg!("timer park", &duration);
+        dbg!("timer park", &duration);
         self.park_internal(Some(duration));
     }
 
     type Handle = (TimerHandle, P::Handle);
 
     fn handle(&self) -> Self::Handle {
-        (TimerHandle(self.queue.clone()), self.park.handle())
+        let unpark: std::sync::Arc<dyn Unpark> = std::sync::Arc::new(self.park.unpark());
+        #[cfg(loom)]
+        let unpark = Arc::from_std(unpark);
+        (
+            TimerHandle {
+                timers: self.global.clone(),
+                unpark,
+            },
+            self.park.handle(),
+        )
     }
 }
 
 #[derive(Default)]
-struct Queue(Mutex<Vec<(Instant, Waker)>>);
+struct Queue(Vec<(Instant, Waker)>);
 
 impl Queue {
-    pub(crate) fn insert(&self, instant: Instant, task: Waker) {
-        let mut queue = self.0.lock().unwrap();
-        let index = match queue.binary_search_by_key(&Reverse(instant), |e| Reverse(e.0)) {
+    pub(crate) fn insert(&mut self, instant: Instant, task: Waker) {
+        let index = match self
+            .0
+            .binary_search_by_key(&Reverse(instant), |e| Reverse(e.0))
+        {
             Ok(index) | Err(index) => index,
         };
-        queue.insert(index, (instant, task));
+        self.0.insert(index, (instant, task));
     }
 
-    pub(crate) fn iter(&self) -> QueueIter<'_> {
-        QueueIter(self.0.lock().unwrap(), Instant::now())
+    pub(crate) fn iter(&mut self) -> QueueIter<'_> {
+        QueueIter(&mut self.0, Instant::now())
     }
 }
 
-pub struct QueueIter<'a>(MutexGuard<'a, Vec<(Instant, Waker)>>, Instant);
+pub struct QueueIter<'a>(&'a mut Vec<(Instant, Waker)>, Instant);
 impl<'a> Iterator for QueueIter<'a> {
     type Item = Waker;
 
@@ -114,7 +135,13 @@ impl Future for Sleep {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // if the future is not yet ready
         if self.instant > Instant::now() {
-            context(|q| q.insert(self.instant, cx.waker().clone()));
+            context(|h| {
+                h.timers
+                    .lock()
+                    .unwrap()
+                    .insert(self.instant, cx.waker().clone());
+                h.unpark.unpark();
+            });
             Poll::Pending
         } else {
             Poll::Ready(())
@@ -136,19 +163,21 @@ impl Sleep {
 }
 
 thread_local! {
-    static TIMERS: RefCell<Option<Arc<Queue>>> = RefCell::new(None);
+    static TIMERS: RefCell<Option<TimerHandle>> = RefCell::new(None);
 }
 
 #[derive(Clone)]
-pub struct TimerHandle(Arc<Queue>);
+pub struct TimerHandle {
+    timers: Arc<Mutex<Queue>>,
+    unpark: Arc<dyn Unpark>,
+}
 impl Handle for TimerHandle {
-    fn register(&self) {
-        TIMERS.with(|r| *r.borrow_mut() = Some(self.0.clone()));
+    fn register(self) {
+        TIMERS.with(|r| *r.borrow_mut() = Some(self));
     }
-
 }
 
-fn context<R>(f: impl FnOnce(&Arc<Queue>) -> R) -> R {
+fn context<R>(f: impl FnOnce(&TimerHandle) -> R) -> R {
     TIMERS.with(|r| {
         let r = r.borrow();
         let r = r.as_ref().expect("called outside of an reactor context");

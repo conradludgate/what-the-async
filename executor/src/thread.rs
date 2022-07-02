@@ -1,23 +1,21 @@
-#![cfg_attr(not(feature = "full"), allow(dead_code))]
+use crate::{Park, Unpark};
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Condvar, Mutex};
-
-use super::parker::{Park, Unpark};
-
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::{atomic::Ordering::SeqCst, PoisonError};
 use std::time::Duration;
 
+#[cfg(loom)]
+use loom::sync::{atomic::AtomicUsize, Arc, Condvar, Mutex};
+#[cfg(not(loom))]
+use std::sync::{atomic::AtomicUsize, Arc, Condvar, Mutex};
+
 #[derive(Debug)]
-pub(crate) struct ParkThread {
+pub struct ParkThread {
     inner: Arc<Inner>,
 }
 
-pub(crate) type ParkError = ();
-
 /// Unblocks a thread that was blocked by `ParkThread`.
 #[derive(Clone, Debug)]
-pub(crate) struct UnparkThread {
+pub struct UnparkThread {
     inner: Arc<Inner>,
 }
 
@@ -52,26 +50,22 @@ impl ParkThread {
 
 impl Park for ParkThread {
     type Unpark = UnparkThread;
-    type Error = ParkError;
 
     fn unpark(&self) -> Self::Unpark {
         let inner = self.inner.clone();
         UnparkThread { inner }
     }
 
-    fn park(&mut self) -> Result<(), Self::Error> {
+    fn park(&mut self) {
         self.inner.park();
-        Ok(())
     }
 
-    fn park_timeout(&mut self, duration: Duration) -> Result<(), Self::Error> {
+    fn park_timeout(&mut self, duration: Duration) {
         self.inner.park_timeout(duration);
-        Ok(())
     }
 
-    // fn shutdown(&mut self) {
-    //     self.inner.shutdown();
-    // }
+    type Handle = ();
+    fn handle(&self) -> Self::Handle {}
 }
 
 // ==== impl Inner ====
@@ -90,10 +84,7 @@ impl Inner {
         }
 
         // Otherwise we need to coordinate going to sleep
-        let mut m = self
-            .mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut m = self.mutex.lock().unwrap_or_else(PoisonError::into_inner);
 
         match self.state.compare_exchange(EMPTY, PARKED, SeqCst, SeqCst) {
             Ok(_) => {}
@@ -143,10 +134,7 @@ impl Inner {
             return;
         }
 
-        let m = self
-            .mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let m = self.mutex.lock().unwrap_or_else(PoisonError::into_inner);
 
         match self.state.compare_exchange(EMPTY, PARKED, SeqCst, SeqCst) {
             Ok(_) => {}
@@ -167,8 +155,8 @@ impl Inner {
         let (_m, _result) = self.condvar.wait_timeout(m, dur).unwrap();
 
         match self.state.swap(EMPTY, SeqCst) {
-            | PARKED // no notification, alas
-            | NOTIFIED => {} // got a notification, hurray!
+            | NOTIFIED // got a notification, hurray!
+            | PARKED => {}   // no notification, alas
             n => panic!("inconsistent park_timeout state: {}", n),
         }
     }
@@ -201,10 +189,6 @@ impl Inner {
 
         self.condvar.notify_one();
     }
-
-    fn shutdown(&self) {
-        self.condvar.notify_all();
-    }
 }
 
 impl Default for ParkThread {
@@ -219,60 +203,4 @@ impl Unpark for UnparkThread {
     fn unpark(&self) {
         self.inner.unpark();
     }
-}
-
-use std::mem;
-use std::task::{RawWaker, RawWakerVTable, Waker};
-
-impl UnparkThread {
-    pub(crate) fn into_waker(self) -> Waker {
-        unsafe {
-            let raw = unparker_to_raw_waker(self.inner);
-            Waker::from_raw(raw)
-        }
-    }
-}
-
-impl Inner {
-    #[allow(clippy::wrong_self_convention)]
-    fn into_raw(this: Arc<Inner>) -> *const () {
-        Arc::into_raw(this).cast::<()>()
-    }
-
-    unsafe fn from_raw(ptr: *const ()) -> Arc<Inner> {
-        Arc::from_raw(ptr.cast::<Inner>())
-    }
-}
-
-unsafe fn unparker_to_raw_waker(unparker: Arc<Inner>) -> RawWaker {
-    RawWaker::new(
-        Inner::into_raw(unparker),
-        &RawWakerVTable::new(clone, wake, wake_by_ref, drop_waker),
-    )
-}
-
-unsafe fn clone(raw: *const ()) -> RawWaker {
-    let unparker = Inner::from_raw(raw);
-
-    // Increment the ref count
-    mem::forget(unparker.clone());
-
-    unparker_to_raw_waker(unparker)
-}
-
-unsafe fn drop_waker(raw: *const ()) {
-    drop(Inner::from_raw(raw));
-}
-
-unsafe fn wake(raw: *const ()) {
-    let unparker = Inner::from_raw(raw);
-    unparker.unpark();
-}
-
-unsafe fn wake_by_ref(raw: *const ()) {
-    let unparker = Inner::from_raw(raw);
-    unparker.unpark();
-
-    // We don't actually own a reference to the unparker
-    mem::forget(unparker);
 }

@@ -1,64 +1,65 @@
-use std::{error::Error, net::SocketAddr};
+// use std::{error::Error, net::SocketAddr};
 
-use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
-use what_the_async as wta;
-use what_the_async::net::{TcpListener, TcpStream};
+// use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
+// use what_the_async as wta;
+// use what_the_async::net::{TcpListener, TcpStream};
 
-fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let mut runtime = wta::Runtime::default();
-    runtime.block_on(start())
-}
+// fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+//     let mut runtime = wta::Runtime::default();
+//     runtime.block_on(start())
+// }
 
-async fn start() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let addr = "127.0.0.1:8080";
-    let server = TcpListener::bind(addr.parse().unwrap())?;
-    println!("Listening on: {}", addr);
+// async fn start() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+//     let addr = "127.0.0.1:8080";
+//     let server = TcpListener::bind(addr.parse().unwrap())?;
+//     println!("Listening on: {}", addr);
 
-    let mut accept = server.accept();
+//     let mut accept = server.accept();
 
-    loop {
-        let (stream, addr) = accept.next().await.unwrap()?;
-        wta::spawn(async move {
-            if let Err(e) = process(stream, addr).await {
-                println!("failed to process connection; error = {}", e);
-            }
-        });
-    }
-}
+//     loop {
+//         let (stream, addr) = accept.next().await.unwrap()?;
+//         wta::spawn(async move {
+//             if let Err(e) = process(stream, addr).await {
+//                 println!("failed to process connection; error = {}", e);
+//             }
+//         });
+//     }
+// }
 
-async fn process(
-    stream: TcpStream,
-    addr: SocketAddr,
-) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    println!(
-        "connected to addr {addr:?} on thread {thread_id:?}",
-        thread_id = std::thread::current().id()
-    );
+// async fn process(
+//     stream: TcpStream,
+//     addr: SocketAddr,
+// ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+//     println!(
+//         "connected to addr {addr:?} on thread {thread_id:?}",
+//         thread_id = std::thread::current().id()
+//     );
 
-    let mut reader = BufReader::new(stream);
+//     let mut reader = BufReader::new(stream);
 
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
-            break;
-        };
-        println!(
-            "read {line:?} from addr {addr:?} on thread {thread_id:?}",
-            thread_id = std::thread::current().id()
-        );
+//     loop {
+//         let mut line = String::new();
+//         if reader.read_line(&mut line).await? == 0 {
+//             break;
+//         };
+//         println!(
+//             "read {line:?} from addr {addr:?} on thread {thread_id:?}",
+//             thread_id = std::thread::current().id()
+//         );
 
-        reader.get_mut().write_all(line.as_bytes()).await?;
+//         reader.get_mut().write_all(line.as_bytes()).await?;
 
-        println!(
-            "wrote to addr {addr:?} on thread {thread_id:?}",
-            thread_id = std::thread::current().id()
-        );
-    }
+//         println!(
+//             "wrote to addr {addr:?} on thread {thread_id:?}",
+//             thread_id = std::thread::current().id()
+//         );
+//     }
 
-    println!(
-        "closed conn to addr {addr:?} on thread {thread_id:?}",
-        thread_id = std::thread::current().id()
-    );
+//     println!(
+//         "closed conn to addr {addr:?} on thread {thread_id:?}",
+//         thread_id = std::thread::current().id()
+//     );
 
-    Ok(())
-}
+//     Ok(())
+// }
+fn main() {}

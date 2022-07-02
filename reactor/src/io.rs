@@ -1,12 +1,17 @@
-use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use mio::{event::Source, Token};
 use sharded_slab::Slab;
 use std::{
     cell::RefCell,
     ops::{Deref, DerefMut},
-    sync::Arc,
     time::Duration,
 };
+
+#[cfg(loom)]
+use loom::{sync::Arc, thread_local};
+#[cfg(not(loom))]
+use std::{sync::Arc, thread_local};
+
 use wta_executor::{Handle, Park, Unpark};
 
 const WAKE_TOKEN: Token = Token(usize::MAX);
@@ -37,26 +42,24 @@ impl Park for Driver {
     }
 
     fn park(&mut self) {
-        // dbg!("io park");
         self.os.process(None);
     }
 
     fn park_timeout(&mut self, duration: Duration) {
-        // dbg!("io park", &duration);
         self.os.process(Some(duration));
     }
 
-    type Handle = IoHandle;
+    type Handle = RegistryHandle;
 
     fn handle(&self) -> Self::Handle {
-        IoHandle(self.os.registry.clone())
+        RegistryHandle(self.os.registry.clone())
     }
 }
 
 pub struct Waker(Arc<mio::Waker>);
 impl Unpark for Waker {
     fn unpark(&self) {
-        // dbg!("io wakeup");
+        dbg!("io wakeup");
         self.0.wake().unwrap();
     }
 }
@@ -118,6 +121,7 @@ impl Os {
 
     /// Polls the OS for new events, and dispatches those to any awaiting tasks
     pub(crate) fn process(&mut self, duration: Option<Duration>) {
+        dbg!("io process", &duration);
         match self.poll.poll(&mut self.events, duration) {
             Ok(_) => {}
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => return,
@@ -125,9 +129,9 @@ impl Os {
         }
 
         for event in &self.events {
-            // dbg!("os event found", event.token());
+            dbg!("os event found", event.token());
             if let Some(sender) = self.registry.tasks.get(event.token().0) {
-                if sender.unbounded_send(event.into()).is_err() {
+                if sender.send(event.into()).is_err() {
                     // error means the receiver was dropped
                     // which means the registration should have been de-registered
                     self.registry.tasks.remove(event.token().0);
@@ -160,7 +164,7 @@ impl<S: Source> DerefMut for Registration<S> {
 
 impl<S: Source> Registration<S> {
     pub fn new(mut source: S, interests: mio::Interest) -> std::io::Result<Self> {
-        let (sender, events) = unbounded();
+        let (sender, events) = unbounded_channel();
         context(|r| {
             let token = Token(r.tasks.insert(sender).unwrap());
             r.registry.register(&mut source, token, interests)?;
@@ -193,10 +197,10 @@ thread_local! {
 }
 
 #[derive(Clone)]
-pub struct IoHandle(Arc<Registry>);
-impl Handle for IoHandle {
-    fn register(&self) {
-        OS.with(|r| *r.borrow_mut() = Some(self.0.clone()));
+pub struct RegistryHandle(Arc<Registry>);
+impl Handle for RegistryHandle {
+    fn register(self) {
+        OS.with(|r| *r.borrow_mut() = Some(self.0));
     }
 }
 

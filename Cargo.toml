@@ -15,11 +15,22 @@ repository = "https://github.com/conradludgate/what-the-async"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["io"]
+io = ["wta-reactor/io"]
+
 [dependencies]
 wta-reactor = { version = "=0.1.0", path = "reactor" }
 wta-executor = { version = "=0.1.0", path = "executor" }
-futures = "0.3"
-crossbeam = "0.8.1"
+futures-util = "0.3"
+crossbeam-deque = { git = "https://github.com/kvark/crossbeam", branch = "loom"}
 
 [dev-dependencies]
 rand = "0.8"
+futures = "0.3"
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.5"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+crossbeam-deque = { git = "https://github.com/kvark/crossbeam", branch = "loom", features = ["loom"] }
