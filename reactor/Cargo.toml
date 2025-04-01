@@ -1,6 +1,6 @@
 [package]
 name = "wta-reactor"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Reactor for the what-the-async runtime"
 license = "MIT"
@@ -10,5 +10,5 @@ repository = "https://github.com/conradludgate/what-the-async"
 
 [dependencies]
 futures = "0.3"
-mio = { version = "0.8", features = ["os-poll", "net"] }
+mio = { version = "1", features = ["os-poll", "net"] }
 sharded-slab = "0.1.4"

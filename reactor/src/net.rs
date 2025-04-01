@@ -73,14 +73,11 @@ impl TcpStream {
     }
 
     fn poll_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let event = match ready!(self.registration.events.poll_next_unpin(cx)) {
-            Some(event) => event,
-            None => {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "channel disconnected",
-                )))
-            }
+        let Some(event) = ready!(self.registration.events.poll_next_unpin(cx)) else {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "channel disconnected",
+            )));
         };
         self.read |= event.is_readable();
         self.write |= event.is_writable();
@@ -130,7 +127,7 @@ impl AsyncWrite for TcpStream {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        poll_io!(self, cx @ write: let _ = self.registration.flush(); Ok(()))
+        poll_io!(self, cx @ write: let () = self.registration.flush(); Ok(()))
     }
 
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {

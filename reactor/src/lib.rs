@@ -34,7 +34,7 @@ impl Reactor {
 }
 
 thread_local! {
-    static REACTOR: RefCell<Option<Arc<Reactor>>> = RefCell::new(None);
+    static REACTOR: RefCell<Option<Arc<Reactor>>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn context<R>(f: impl FnOnce(&Arc<Reactor>) -> R) -> R {

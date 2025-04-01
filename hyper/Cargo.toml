@@ -1,6 +1,6 @@
 [package]
 name = "wta-hyper"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Hyper support for the what-the-async runtime"
 license = "MIT"
@@ -9,14 +9,14 @@ repository = "https://github.com/conradludgate/what-the-async"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wta-reactor = { version = "=0.1.0", path = "../reactor" }
+wta-reactor = { version = "=0.1.1", path = "../reactor" }
 wta-executor = { version = "=0.1.0", path = "../executor" }
 futures = "0.3"
 hyper = { version = "0.14", features = ["server"] }
 tokio = { version = "1.0", default-features = false }
 
 [dev-dependencies]
-what-the-async = { version = "=0.1.0", path = ".." }
+what-the-async = { version = "=0.1.1", path = ".." }
 hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
 tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"

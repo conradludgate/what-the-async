@@ -32,7 +32,7 @@ impl<'a> IntoIterator for &'a Queue {
 }
 
 pub(crate) struct QueueIter<'a>(MutexGuard<'a, Vec<(Instant, Waker)>>, Instant);
-impl<'a> Iterator for QueueIter<'a> {
+impl Iterator for QueueIter<'_> {
     type Item = Waker;
 
     fn next(&mut self) -> Option<Self::Item> {
